@@ -60,7 +60,7 @@ class Pressure_CGSolver:
         # assume that scale_A = dt / (grid_x^2 * rho)
         for i, j in ti.ndrange(self.m, self.n):
             if self.cell_type[i, j] == utils.FLUID:
-                self.Adiag += (self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]
+                self.Adiag[i, j] += (self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]
                 if self.cell_type[i - 1, j] == utils.FLUID:
                     self.Adiag[i, j] -= scale_A
                 if self.cell_type[i + 1, j] == utils.FLUID:

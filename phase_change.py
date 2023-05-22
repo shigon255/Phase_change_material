@@ -9,7 +9,7 @@ from utils import ColorMap, vec2, vec3, clamp
 import utils
 import time
 
-ti.init(arch=ti.gpu, default_fp=ti.f32)
+ti.init(arch=ti.gpu, default_fp=ti.f32, debug = True)
 
 # ---------------params in simulation----------------
 cell_res = 256
@@ -152,9 +152,11 @@ mg_level = 4
 pre_and_post_smoothing = 2
 bottom_smoothing = 10
 
+dt = 0.01
+
 if preconditioning == None:
     # solver = CGSolver(m, n, u, v, cell_type)
-    pressure_solver = Pressure_CGSolver(m, n, u, v, cell_type)
+    pressure_solver = Pressure_CGSolver(m, n, u, v, dt, Jp, Je, inv_lambda, cell_type)
     temperature_solver = Temperature_CGSolver(m, n, k_u, k_v, T, c, cell_type)
 elif preconditioning == 'MIC':
     solver = MICPCGSolver(m, n, u, v, cell_type, MIC_blending=MIC_blending)
@@ -327,7 +329,7 @@ def init():
     init_particles()
 
 # -------------subprocesses----------------
-@ti.kernal
+@ti.kernel
 def deformation_gradient_add_plasticity():
     for p in ti.grouped(particle_positions):
         U, sig, V = ti.svd(particle_Fe[p])
@@ -339,7 +341,7 @@ def deformation_gradient_add_plasticity():
         particle_Fp[p] = (1 / ti.sqrt(Jp)) * particle_Fp[p]
 
 @ti.func
-def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, fp, stagger, kp):
+def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, fp, stagger, kp, e):
     inv_dx = vec2(inv_grid_x, inv_grid_y).cast(ti.f32)
     # inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
@@ -357,7 +359,7 @@ def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, fp, stagger, kp):
             grid_v[base + offset] += weight * p_mass * (vp + cp.dot(dpos))
             grid_k[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
             grid_m[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
-            grid_f[base + offset] += ti.math.dot(-fp, weight_grad)
+            grid_f[base + offset] += ti.math.dot(e, (-fp) @ weight_grad )
 
 @ti.func
 def scatter_cell(cell_m,  cell_J, cell_Je, cell_Jp, cell_c, cell_T, cell_inv_lambda, xp, par_J, par_Je, par_Jp, par_c, par_T, par_inv_lambda):
@@ -395,6 +397,9 @@ def P2G():
         if particle_type[p] == P_FLUID:
             xp = particle_positions[p]
             par_F = particle_Fe[p] * particle_Fp[p]
+            par_Je = particle_Fe[p].determinant()
+            par_Jp = particle_Fp[p].determinant()
+            par_J = par_Je * par_Jp
             U, sig, V = ti.svd(par_F)
             # P(F) F^T
             par_f = 2 * particle_mu[p] * (par_F - U@V.transpose()) + ti.Matrix.identity(float, 2) * particle_la[p] * par_J * (par_J-1)
@@ -402,19 +407,19 @@ def P2G():
             # take the first row and second row to compute the force in u direction and v direction respectively
             # face
             scatter_face(u, u_face_mass, k_u, fu, xp, particle_velocities[p][0],
-                            cp_x[p], par_f[0].transpose(), stagger_u, particle_k[p])
+                            cp_x[p], par_f.transpose(), stagger_u, particle_k[p], vec2(1.0, 0.0))
             scatter_face(v, v_face_mass, k_v, fv, xp, particle_velocities[p][1],
-                            cp_y[p], par_f[1].transpose(), stagger_v, particle_k[p])
+                            cp_y[p], par_f.transpose(), stagger_v, particle_k[p], vec2(0.0, 1.0))
             # cell
-            par_Je = particle_Fe[p].determinant()
-            par_Jp = particle_Fp[p].determinant()
-            par_J = par_Je * par_Jp
+            # par_Je = particle_Fe[p].determinant()
+            # par_Jp = particle_Fp[p].determinant()
+            # par_J = par_Je * par_Jp
             par_c = particle_c[p]
             par_T = particle_T[p]
             par_inv_lambda = 1.0 / particle_la[p]
             scatter_cell(cell_mass, J, Je, Jp, c, T, inv_lambda, xp, par_J, par_Je, par_Jp, par_c, par_T, par_inv_lambda)
 
-@ti.kernal
+@ti.kernel
 def clear_field():
     u.fill(0.0)
     v.fill(0.0)
@@ -488,7 +493,7 @@ def face_normalize():
         if v_face_mass[i, j] > 0:
             k_v[i, j] = k_v[i, j] / v_face_mass[i, j]
 
-@ti.kernal
+@ti.kernel
 def cell_normalize():
     for i, j in J:
         if cell_mass[i, j] > 0:
@@ -544,10 +549,10 @@ def solve_pressure(dt):
     scale_A = dt / (p_rho * grid_x * grid_x)
     scale_b = 1 / grid_x
 
-    solver.system_init(scale_A, scale_b)
-    solver.solve(500)
+    pressure_solver.system_init(scale_A, scale_b)
+    pressure_solver.solve(500)
 
-    p.copy_from(solver.p)
+    p.copy_from(pressure_solver.p)
 
 @ti.kernel
 def apply_pressure(dt: ti.f32):
@@ -571,10 +576,10 @@ def solve_temperature(dt):
     # scale_b = 1 / grid_x
     scale_b = 1
 
-    solver.system_init(scale_A, scale_b)
-    solver.solve(500)
+    temperature_solver.system_init(scale_A, scale_b)
+    temperature_solver.solve(500)
 
-    T.copy_from(solver.p)
+    T.copy_from(temperature_solver.p)
 
 @ti.func
 def gather_vp(grid_v, xp, stagger):
@@ -638,21 +643,22 @@ def gather_Tp(grid_T, xp):
     return Tp
 
 @ti.func
-def gather_vp_grad(grid_v, xp, stagger):
+def gather_vp_grad(grid_v, xp, stagger, e):
     inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
     w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
     w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
-    vp_grad = ti.Matrix.zero(dt = ti.f32, n=2)
+    vp_grad = ti.Matrix.zero(float, 2, 2)
 
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
             # weight = w[i][0] * w[j][1]
-            vp_grad += grid_v[base + offset].outer_product(w_grad)
-
+            weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
+            vp_grad += (grid_v[base + offset] * e).outer_product(weight_grad)
+    
     return vp_grad
 
 @ti.kernel
@@ -676,24 +682,24 @@ def G2P():
             particle_last_T[p] = particle_T[p]
             particle_T[p] = gather_Tp(T, xp)
 
-@ti.kernal
+@ti.kernel
 def update_deformation_gradient():
     stagger_u = vec2(0.0, 0.5)
     stagger_v = vec2(0.5, 0.0)
     for p in ti.grouped(particle_positions):
         if particle_type[p] == P_FLUID:
             xp = particle_positions[p]
-            vp_grad = ti.Matrix.zero(dt = ti.f32, n=2)
-            vp_grad += gather_vp_grad(u, xp, stagger_u)
-            vp_grad += gather_vp_grad(v, xp, stagger_v)
+            vp_grad = ti.Matrix.zero(float, 2, 2)
+            vp_grad += gather_vp_grad(u, xp, stagger_u, vec2(1.0, 0.0))
+            vp_grad += gather_vp_grad(v, xp, stagger_v, vec2(0.0, 1.0))
             # update deformation gradient
-            new_particle_Fe = (ti.Matrix.identity(float, 2) + vp_grad)
+            new_particle_Fe = (ti.Matrix.identity(float, 2) + vp_grad) * particle_Fe[p]
             if particle_Phase[p] == P_FLUID_PHASE:
                 new_particle_Fe = ti.math.pow(new_particle_Fe.determinant(), 0.5) * ti.Matrix.identity(dt = ti.f32, n=2)
             particle_Fe[p] = new_particle_Fe
 
-@ti.kernal
-def advect_particle(dt):
+@ti.kernel
+def advect_particle(dt: ti.f32):
     for p in ti.grouped(particle_positions):
         if particle_type[p] == P_FLUID:
             pos = particle_positions[p]
@@ -717,7 +723,7 @@ def advect_particle(dt):
             particle_positions[p] = pos
             particle_velocities[p] = pv
 
-@ti.kernal
+@ti.kernel
 def update_heat_parameters():
     # update temperature, latent, phase...
     # update parameter (mu, lambda, c, k)
@@ -788,7 +794,8 @@ def onestep(dt):
 
 
 def simulation(max_time, max_step):
-    dt = 0.01
+    global dt
+    # dt = 0.01
     t = 0
     step = 1
 
