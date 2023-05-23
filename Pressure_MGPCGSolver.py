@@ -1,4 +1,5 @@
 import taichi as ti
+import math
 import utils
 
 
@@ -307,6 +308,8 @@ class Pressure_MGPCGSolver:
                 #     print("iter {}, res = {}".format(iteration, rTr))
 
             print("Converged to {} in {} iterations".format(rTr, iteration))
+        print("Pressure result: ")
+        print(self.p)
 
     @ti.kernel
     def reduce(self, p: ti.template(), q: ti.template()):

@@ -141,6 +141,8 @@ class Temperature_CGSolver:
                 #     print("iter {}, res = {}".format(iteration, rTr))
 
             print("Converged to {} in {} iterations".format(rTr, iteration))
+        print("Temperature result: ")
+        print(self.p)
 
     @ti.kernel
     def reduce(self, p: ti.template(), q: ti.template()):
