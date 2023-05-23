@@ -3,7 +3,9 @@ import taichi as ti
 from Pressure_CGSolver import Pressure_CGSolver
 from Temperature_CGSolver import Temperature_CGSolver
 from MICPCGSolver import MICPCGSolver
-from MGPCGSolver import MGPCGSolver
+# from MGPCGSolver import MGPCGSolver
+from Pressure_MGPCGSolver import Pressure_MGPCGSolver
+from Temperature_MGPCGSolver import Temperature_MGPCGSolver
 import numpy as np
 from utils import ColorMap, vec2, vec3, clamp
 import utils
@@ -143,8 +145,8 @@ cell_type = ti.field(dtype=ti.i32, shape=(m, n))
 
 
 #pressure solver
-# preconditioning = 'MG'
-preconditioning = None
+preconditioning = 'MG'
+# preconditioning = None
 
 MIC_blending = 0.97
 
@@ -161,12 +163,10 @@ if preconditioning == None:
 elif preconditioning == 'MIC':
     solver = MICPCGSolver(m, n, u, v, cell_type, MIC_blending=MIC_blending)
 elif preconditioning == 'MG':
-    solver = MGPCGSolver(m,
-                         n,
-                         u,
-                         v,
-                         cell_type,
-                         multigrid_level=mg_level,
+    pressure_solver = Pressure_MGPCGSolver(m, n, u, v, dt, Jp, Je, inv_lambda, cell_type, multigrid_level=mg_level,
+                         pre_and_post_smoothing=pre_and_post_smoothing,
+                         bottom_smoothing=bottom_smoothing)
+    temperature_solver = Temperature_MGPCGSolver(m, n, k_u, k_v, T, c, cell_type, multigrid_level=mg_level,
                          pre_and_post_smoothing=pre_and_post_smoothing,
                          bottom_smoothing=bottom_smoothing)
 

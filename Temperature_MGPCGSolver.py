@@ -75,9 +75,7 @@ class Temperature_MGPCGSolver:
         # assume that scale_b = 1 / grid_x
         for i, j in ti.ndrange(self.m, self.n):
             if self.cell_type[i, j] == utils.FLUID:
-                self.b[i,
-                       j] = (-1) * (self.Je[i, j]-1) / (self.dt * self.Je[i, j]) + (-1) * scale_b * (self.u[i + 1, j] - self.u[i, j] +
-                                            self.v[i, j + 1] - self.v[i, j])
+                self.b[i, j] = self.old_T[i, j]
             elif self.cell_type[i, j] == utils.AIR:
                 # hardcode 343K
                 self.b[i, j] = 343
@@ -104,7 +102,7 @@ class Temperature_MGPCGSolver:
         for i, j in ti.ndrange(self.m, self.n):
             if self.cell_type[i, j] == utils.FLUID:
                 new_scale_A = scale_A / self.c[i, j]
-                self.Adiag[0][i, j] += (self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]
+                self.Adiag[0][i, j] += 1.0
                 if self.cell_type[i - 1, j] == utils.FLUID:
                     self.Adiag[0][i, j] -= new_scale_A
                 if self.cell_type[i + 1, j] == utils.FLUID:
@@ -150,12 +148,12 @@ class Temperature_MGPCGSolver:
 
     @ti.kernel
     def preconditioner_init(self, scale: ti.f32, l: ti.template()):
-        new_scale_A = scale / self.c[i, j]
-        s = new_scale_A / (2**l * 2**l)
 
         for i, j in self.grid_type[l]:
             if self.grid_type[l][i, j] == utils.FLUID:
-                self.Adiag[l][i, j] += ((self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]) / (2**l * 2**l)
+                new_scale_A = scale / self.c[i, j]
+                s = new_scale_A / (2**l * 2**l)
+                self.Adiag[l][i, j] += 1.0 / (2**l * 2**l)
                 if self.grid_type[l][i - 1, j] == utils.FLUID:
                     self.Adiag[l][i, j] -= s
                 if self.grid_type[l][i + 1, j] == utils.FLUID:
