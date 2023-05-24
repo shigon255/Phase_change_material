@@ -101,23 +101,23 @@ class Pressure_MGPCGSolver:
         # define left handside of linear system
         # assume that scale_A = dt / (grid_x^2 * rho)
         for i, j in ti.ndrange(self.m, self.n):
+            self.Adiag[0][i, j] += (self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]
             if self.cell_type[i, j] == utils.FLUID:
-                self.Adiag[0][i, j] += (self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]
                 if self.cell_type[i - 1, j] == utils.FLUID:
-                    self.Adiag[0][i, j] -= scale_A
+                    self.Adiag[0][i, j] += scale_A
                 if self.cell_type[i + 1, j] == utils.FLUID:
-                    self.Adiag[0][i, j] -= scale_A
-                    self.Ax[0][i, j] = scale_A
+                    self.Adiag[0][i, j] += scale_A
+                    self.Ax[0][i, j] = -scale_A
                 elif self.cell_type[i + 1, j] == utils.AIR:
-                    self.Adiag[0][i, j] -= scale_A
+                    self.Adiag[0][i, j] += scale_A
 
                 if self.cell_type[i, j - 1] == utils.FLUID:
-                    self.Adiag[0][i, j] -= scale_A
+                    self.Adiag[0][i, j] += scale_A
                 if self.cell_type[i, j + 1] == utils.FLUID:
-                    self.Adiag[0][i, j] -= scale_A
-                    self.Ay[0][i, j] = scale_A
+                    self.Adiag[0][i, j] += scale_A
+                    self.Ay[0][i, j] = -scale_A
                 elif self.cell_type[i, j + 1] == utils.AIR:
-                    self.Adiag[0][i, j] -= scale_A
+                    self.Adiag[0][i, j] += scale_A
 
     @ti.kernel
     def gridtype_init(self, l: ti.template()):
@@ -151,23 +151,23 @@ class Pressure_MGPCGSolver:
         s = scale / (2**l * 2**l)
 
         for i, j in self.grid_type[l]:
+            self.Adiag[l][i, j] += ((self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]) / (2**l * 2**l)
             if self.grid_type[l][i, j] == utils.FLUID:
-                self.Adiag[l][i, j] += ((self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]) / (2**l * 2**l)
                 if self.grid_type[l][i - 1, j] == utils.FLUID:
-                    self.Adiag[l][i, j] -= s
+                    self.Adiag[l][i, j] += s
                 if self.grid_type[l][i + 1, j] == utils.FLUID:
-                    self.Adiag[l][i, j] -= s
-                    self.Ax[l][i, j] = s
+                    self.Adiag[l][i, j] += s
+                    self.Ax[l][i, j] = -s
                 elif self.grid_type[l][i + 1, j] == utils.AIR:
-                    self.Adiag[l][i, j] -= s
+                    self.Adiag[l][i, j] += s
 
                 if self.grid_type[l][i, j - 1] == utils.FLUID:
-                    self.Adiag[l][i, j] -= s
+                    self.Adiag[l][i, j] += s
                 if self.grid_type[l][i, j + 1] == utils.FLUID:
-                    self.Adiag[l][i, j] -= s
-                    self.Ay[l][i, j] = s
+                    self.Adiag[l][i, j] += s
+                    self.Ay[l][i, j] = -s
                 elif self.grid_type[l][i, j + 1] == utils.AIR:
-                    self.Adiag[l][i, j] -= s
+                    self.Adiag[l][i, j] += s
 
     def system_init(self, scale_A, scale_b):
         self.b.fill(0.0)

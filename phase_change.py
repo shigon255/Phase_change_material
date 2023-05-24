@@ -113,7 +113,7 @@ cp_y = ti.Vector.field(2, dtype=ti.f32, shape=(m, n, npar, npar))
 
 # particle F
 particle_Fe = ti.Matrix.field(2, 2, dtype=ti.f32, shape=(m, n, npar, npar))  # Elastic deformation gradient (F_E)
-particle_Fp = ti.Matrix.field(2, 2, dtype=ti.f32, shape=(m, n, npar, npar))  # Plastic deformation gradient (F_E)
+particle_Fp = ti.Matrix.field(2, 2, dtype=ti.f32, shape=(m, n, npar, npar))  # Plastic deformation gradient (F_P)
 
 # particle type
 particle_type = ti.field(dtype=ti.i32, shape=(m, n, npar, npar))
@@ -147,9 +147,9 @@ gui = ti.GUI("watersim2D", screen_res, show_gui = False)
 cell_type = ti.field(dtype=ti.i32, shape=(m, n))
 
 
-#pressure solver
-preconditioning = 'MG'
-# preconditioning = None
+# pressure solver
+# preconditioning = 'MG'
+preconditioning = None
 
 MIC_blending = 0.97
 
@@ -173,10 +173,6 @@ elif preconditioning == 'MG':
       #                    pre_and_post_smoothing=pre_and_post_smoothing,
         #                  bottom_smoothing=bottom_smoothing)
     temperature_solver = Temperature_CGSolver(m, n, k_u, k_v, T, c, cell_type)
-
-# extrap utils
-valid = ti.field(dtype=ti.i32, shape=(m + 1, n + 1))
-valid_temp = ti.field(dtype=ti.i32, shape=(m + 1, n + 1))
 
 # save to gif
 result_dir = "./results"
@@ -290,10 +286,10 @@ def init():
             fv[i, j] = 0.0
 
         for i, j in k_u:
-            k_u[i, j] = k_ice # for ice, 2.18 W/mK at 273K
+            k_u[i, j] = 0 # for ice, 2.18 W/mK at 273K
 
         for i, j in k_v:
-            k_v[i, j] = k_ice # for ice, 2.18 W/mK at 273K
+            k_v[i, j] = 0 # for ice, 2.18 W/mK at 273K
 
         for i, j in cell_mass:
             cell_mass[i, j] = 0.0
@@ -316,7 +312,6 @@ def init():
                 particle_type[i, j, ix, jx] = P_FLUID
             else:
                 particle_type[i, j, ix, jx] = P_OTHER
-
             px = i * grid_x + (ix + ti.random(ti.f32)) * pspace_x
             py = j * grid_y + (jx + ti.random(ti.f32)) * pspace_y
 
@@ -346,13 +341,14 @@ def init():
 @ti.kernel
 def deformation_gradient_add_plasticity():
     for p in ti.grouped(particle_positions):
-        U, sig, V = ti.svd(particle_Fe[p])
-        for d in ti.static(range(2)):
-            sig[d, d] = ti.min(ti.max(sig[d, d], 1 - 2.5e-2), 1 + 4.5e-3)  # Plasticity
-        Jp = particle_Fp[p].determinant()
-        # Note: this part is (Jp)^(1/d), here d = 2
-        particle_Fe[p] = ti.sqrt(Jp) * particle_Fe[p]
-        particle_Fp[p] = (1 / ti.sqrt(Jp)) * particle_Fp[p]
+        if particle_type[p] == P_FLUID:
+            U, sig, V = ti.svd(particle_Fe[p])
+            for d in ti.static(range(2)):
+                sig[d, d] = ti.min(ti.max(sig[d, d], 1 - 2.5e-2), 1 + 4.5e-3)  # Plasticity
+            Jp = particle_Fp[p].determinant()
+            # Note: this part is (Jp)^(1/d), here d = 2
+            particle_Fe[p] = ti.sqrt(Jp) * particle_Fe[p]
+            particle_Fp[p] = (1 / ti.sqrt(Jp)) * particle_Fp[p]
 
 @ti.func
 def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, PFT, stagger, kp, e):
@@ -364,6 +360,7 @@ def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, PFT, stagger, kp, e
     # Note, in SSJCTS14, they use cubic B-spline
     w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
     w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    print("vp: ", vp)
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
@@ -371,7 +368,7 @@ def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, PFT, stagger, kp, e
             weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
             weight = w[i][0] * w[j][1] # x, y directions, respectively
 
-            
+            print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
             grid_v[base + offset] += weight * p_mass * (vp + cp.dot(dpos))
             grid_k[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
             grid_m[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
@@ -405,7 +402,8 @@ def scatter_cell(cell_m,  cell_J, cell_Je, cell_c, cell_T, cell_inv_lambda, xp, 
 @ti.func
 def set_Jp():
     for i, j in Jp:
-        Jp[i, j] = J[i, j] / Je[i, j]
+        if Je[i, j] > 0:
+            Jp[i, j] = J[i, j] / Je[i, j]
 
 
 @ti.kernel
@@ -765,32 +763,33 @@ def update_heat_parameters():
     # update temperature, latent, phase...
     # update parameter (mu, lambda, c, k)
     for p in ti.grouped(particle_positions):
-        if particle_Phase[p] == P_SOLID_PHASE:
-            if particle_T[p] >= freezing_point and particle_U[p] < particle_l[p]:
-                # melting
-                particle_U[p] += particle_c[p] * p_mass * (particle_T[p] - particle_last_T[p])
-                if particle_U[p] > particle_l[p]:
-                    particle_Phase[p] = P_FLUID_PHASE
-                    particle_mu[p] = mu_fluid
-                    particle_la[p] = lambda_fluid
-                    particle_c[p] = c_fluid
-                    particle_k[p] = k_fluid
-                    particle_U[p] = particle_l[p]
-                else:
-                    particle_T[p] = particle_last_T[p]
-        elif particle_Phase[p] == P_FLUID_PHASE:
-            if particle_T[p] <= freezing_point and particle_U[p] > 0:
-                # freezing
-                particle_U[p] += particle_c[p] * p_mass * (particle_T[p] - particle_last_T[p])
-                if  particle_U[p] < 0:
-                    particle_Phase[p] = P_FLUID_PHASE
-                    particle_mu[p] = mu_fluid
-                    particle_la[p] = lambda_fluid
-                    particle_c[p] = c_fluid
-                    particle_k[p] = k_fluid
-                    particle_U[p] = 0.0
-                else:
-                    particle_T[p] = particle_last_T[p]
+        if particle_type[p] == P_FLUID:
+            if particle_Phase[p] == P_SOLID_PHASE:
+                if particle_T[p] >= freezing_point and particle_U[p] < particle_l[p]:
+                    # melting
+                    particle_U[p] += particle_c[p] * p_mass * (particle_T[p] - particle_last_T[p])
+                    if particle_U[p] > particle_l[p]:
+                        particle_Phase[p] = P_FLUID_PHASE
+                        particle_mu[p] = mu_fluid
+                        particle_la[p] = lambda_fluid
+                        particle_c[p] = c_fluid
+                        particle_k[p] = k_fluid
+                        particle_U[p] = particle_l[p]
+                    else:
+                        particle_T[p] = particle_last_T[p]
+            elif particle_Phase[p] == P_FLUID_PHASE:
+                if particle_T[p] <= freezing_point and particle_U[p] > 0:
+                    # freezing
+                    particle_U[p] += particle_c[p] * p_mass * (particle_T[p] - particle_last_T[p])
+                    if  particle_U[p] < 0:
+                        particle_Phase[p] = P_FLUID_PHASE
+                        particle_mu[p] = mu_fluid
+                        particle_la[p] = lambda_fluid
+                        particle_c[p] = c_fluid
+                        particle_k[p] = k_fluid
+                        particle_U[p] = 0.0
+                    else:
+                        particle_T[p] = particle_last_T[p]
 #  -------------Main algorithm-----------
 
 def onestep(dt):
@@ -810,7 +809,7 @@ def onestep(dt):
     P2G()
     print("-----------end P2G---------------")
     print("-----------start face normalize---------------")
-    # face_normalize()
+    face_normalize()
     print("-----------end face nomralize---------------")
     print("-----------start cell normalize---------------")
     cell_normalize()
@@ -820,9 +819,9 @@ def onestep(dt):
     mark_cell() # Note: need to revise to the SSCJ14 version
     print("-----------end mark cell---------------")
     print("-----------start assign temperature---------------")
-    # assign_temperature()
+    assign_temperature()
     print("-----------end assign temperature---------------")
-    # enforce_boundary()
+    enforce_boundary()
     # Compute grid first due to initialize issue
     # 5. explicitly update velocity (updated by internal & outer force)
     print("-----------start apply force---------------")
@@ -861,7 +860,7 @@ def onestep(dt):
     advect_particle(dt) # move particle & collision handling
     print("-----------end advect particle---------------")
     print("-----------start update haet parameters---------------")
-    # update_heat_parameters()
+    update_heat_parameters()
     print("-----------end update heat parameters---------------")
 
     print("------------end step-----------------------\n")
