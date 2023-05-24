@@ -64,20 +64,20 @@ class Temperature_CGSolver:
                 new_scale_A = scale_A / self.c[i, j]
                 self.Adiag[i, j] += 1.0
                 if self.cell_type[i - 1, j] == utils.FLUID:
-                    self.Adiag[i, j] -= new_scale_A
+                    self.Adiag[i, j] += new_scale_A
                 if self.cell_type[i + 1, j] == utils.FLUID:
-                    self.Adiag[i, j] -= new_scale_A * self.k_u[i + 1, j]
-                    self.Ax[i, j] = new_scale_A
+                    self.Adiag[i, j] += new_scale_A
+                    self.Ax[i, j] = -new_scale_A
                 elif self.cell_type[i + 1, j] == utils.AIR:
-                    self.Adiag[i, j] -= new_scale_A
+                    self.Adiag[i, j] += new_scale_A
 
                 if self.cell_type[i, j - 1] == utils.FLUID:
-                    self.Adiag[i, j] -= new_scale_A
+                    self.Adiag[i, j] += new_scale_A
                 if self.cell_type[i, j + 1] == utils.FLUID:
-                    self.Adiag[i, j] -= new_scale_A * self.k_v[i, j + 1]
-                    self.Ay[i, j] = new_scale_A
+                    self.Adiag[i, j] += new_scale_A
+                    self.Ay[i, j] = -new_scale_A
                 elif self.cell_type[i, j + 1] == utils.AIR:
-                    self.Adiag[i, j] -= new_scale_A
+                    self.Adiag[i, j] += new_scale_A
 
     def system_init(self, scale_A, scale_b):
         self.b.fill(0)

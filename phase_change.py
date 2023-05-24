@@ -820,7 +820,7 @@ def onestep(dt):
     mark_cell() # Note: need to revise to the SSCJ14 version
     print("-----------end mark cell---------------")
     print("-----------start assign temperature---------------")
-    assign_temperature()
+    # assign_temperature()
     print("-----------end assign temperature---------------")
     # enforce_boundary()
     # Compute grid first due to initialize issue
@@ -846,7 +846,7 @@ def onestep(dt):
 
     # 8. Solve heat equation
     print("-----------start solve temperature---------------")
-    solve_temperature(dt)
+    # solve_temperature(dt)
     print("-----------end solve temperature---------------")
 
     # 9. G2P
@@ -861,7 +861,7 @@ def onestep(dt):
     advect_particle(dt) # move particle & collision handling
     print("-----------end advect particle---------------")
     print("-----------start update haet parameters---------------")
-    update_heat_parameters()
+    # update_heat_parameters()
     print("-----------end update heat parameters---------------")
 
     print("------------end step-----------------------\n")

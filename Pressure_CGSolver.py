@@ -62,20 +62,20 @@ class Pressure_CGSolver:
             if self.cell_type[i, j] == utils.FLUID:
                 self.Adiag[i, j] += (self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]
                 if self.cell_type[i - 1, j] == utils.FLUID:
-                    self.Adiag[i, j] -= scale_A
+                    self.Adiag[i, j] += scale_A
                 if self.cell_type[i + 1, j] == utils.FLUID:
-                    self.Adiag[i, j] -= scale_A
-                    self.Ax[i, j] = scale_A
+                    self.Adiag[i, j] += scale_A
+                    self.Ax[i, j] = -scale_A
                 elif self.cell_type[i + 1, j] == utils.AIR:
-                    self.Adiag[i, j] -= scale_A
+                    self.Adiag[i, j] += scale_A
 
                 if self.cell_type[i, j - 1] == utils.FLUID:
-                    self.Adiag[i, j] -= scale_A
+                    self.Adiag[i, j] += scale_A
                 if self.cell_type[i, j + 1] == utils.FLUID:
-                    self.Adiag[i, j] -= scale_A
-                    self.Ay[i, j] = scale_A
+                    self.Adiag[i, j] += scale_A
+                    self.Ay[i, j] = -scale_A
                 elif self.cell_type[i, j + 1] == utils.AIR:
-                    self.Adiag[i, j] -= scale_A
+                    self.Adiag[i, j] += scale_A
 
     def system_init(self, scale_A, scale_b):
         self.b.fill(0)
@@ -91,7 +91,7 @@ class Pressure_CGSolver:
         self.p.fill(0.0)
         self.As.fill(0.0)
         self.s.fill(0.0)
-        self.r.copy_from(self.b)
+        self.r.copy_from(self.b) # init r0 = b-Ap0 where p0 = 0
 
         self.reduce(self.r, self.r)
         init_rTr = self.sum[None]
