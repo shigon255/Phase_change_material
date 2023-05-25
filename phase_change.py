@@ -354,7 +354,9 @@ def deformation_gradient_add_plasticity():
             particle_Fp[p] = (1 / ti.sqrt(Jp)) * particle_Fp[p]
 
 @ti.func
-def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, PFT, stagger, kp, e):
+def scatter_face_u(xp, vp, cp, PFT, kp):
+    stagger = vec2(0.0, 0.5)
+    e = vec2(1.0, 0.0)
     inv_dx = vec2(inv_grid_x, inv_grid_y).cast(ti.f32)
     # inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
@@ -372,13 +374,39 @@ def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, PFT, stagger, kp, e
             weight = w[i][0] * w[j][1] # x, y directions, respectively
 
             # print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
-            grid_v[base + offset] += weight * p_mass * (vp + ti.math.dot(cp, dpos))
-            grid_k[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
-            grid_m[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
-            grid_f[base + offset] += ti.math.dot(e, (-PFT) @ weight_grad )
+            u[base + offset] += weight * p_mass * (vp + ti.math.dot(cp, dpos))
+            k_u[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
+            u_face_mass[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
+            fu[base + offset] += ti.math.dot(e, (-PFT) @ weight_grad )
 
 @ti.func
-def scatter_cell(cell_m,  cell_J, cell_Je, cell_c, cell_T, cell_inv_lambda, xp, par_J, par_Je, par_c, par_T, par_inv_lambda):
+def scatter_face_v(xp, vp, cp, PFT, kp):
+    stagger = vec2(0.5, 0.0)
+    e = vec2(0.0, 1.0)
+    inv_dx = vec2(inv_grid_x, inv_grid_y).cast(ti.f32)
+    # inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
+    base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
+    fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
+    # print(xp)
+    # Note, in SSJCTS14, they use cubic B-spline
+    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
+    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    # print("vp: ", vp)
+    for i in ti.static(range(3)):
+        for j in ti.static(range(3)):
+            offset = vec2(i, j)
+            dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
+            weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
+            weight = w[i][0] * w[j][1] # x, y directions, respectively
+
+            # print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
+            v[base + offset] += weight * p_mass * (vp + ti.math.dot(cp, dpos))
+            k_v[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
+            v_face_mass[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
+            fv[base + offset] += ti.math.dot(e, (-PFT) @ weight_grad )
+
+@ti.func
+def scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda):
     inv_dx = vec2(inv_grid_x, inv_grid_y).cast(ti.f32)
     base = (xp * inv_dx - 0.5).cast(ti.i32)
     fx = xp * inv_dx - base.cast(ti.f32)
@@ -394,12 +422,12 @@ def scatter_cell(cell_m,  cell_J, cell_Je, cell_c, cell_T, cell_inv_lambda, xp, 
             offset = vec2(i, j)
             # dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
             weight = w[i][0] * w[j][1] # x, y directions, respectively
-            cell_m[base + offset] += weight * p_mass
-            cell_Je[base + offset] += weight * p_mass * par_Je
-            cell_J[base + offset] += weight * p_mass * par_J
-            cell_c[base + offset] += weight * p_mass * par_c
-            cell_T[base + offset] += weight * p_mass * par_T
-            cell_inv_lambda[base + offset] += weight * p_mass * par_inv_lambda
+            cell_mass[base + offset] += weight * p_mass
+            Je[base + offset] += weight * p_mass * par_Je
+            J[base + offset] += weight * p_mass * par_J
+            c[base + offset] += weight * p_mass * par_c
+            T[base + offset] += weight * p_mass * par_T
+            inv_lambda[base + offset] += weight * p_mass * par_inv_lambda
             
 
 @ti.func
@@ -431,10 +459,12 @@ def P2G():
             par_f = 2 * particle_mu[p] * (par_F - U@V.transpose()) @ par_F.transpose() + ti.Matrix.identity(float, 2) * particle_la[p] * par_J * (par_J-1)
             par_f = p_vol * par_f # f is 2 by 2 matrix, whilch will be multiplid by weight gradient
             # face
-            scatter_face(u, u_face_mass, k_u, fu, xp, particle_velocities[p][0],
-                            cp_x[p], par_f, stagger_u, particle_k[p], vec2(1.0, 0.0))
-            scatter_face(v, v_face_mass, k_v, fv, xp, particle_velocities[p][1],
-                            cp_y[p], par_f, stagger_v, particle_k[p], vec2(0.0, 1.0))
+            scatter_face_u(xp, particle_velocities[p][0], cp_x[p], par_f, particle_k[p])
+            scatter_face_v(xp, particle_velocities[p][1], cp_y[p], par_f, particle_k[p])
+            # scatter_face(u, u_face_mass, k_u, fu, xp, particle_velocities[p][0],
+              #               cp_x[p], par_f, stagger_u, particle_k[p], vec2(1.0, 0.0))
+            # scatter_face(v, v_face_mass, k_v, fv, xp, particle_velocities[p][1],
+              #               cp_y[p], par_f, stagger_v, particle_k[p], vec2(0.0, 1.0))
             # cell
             # par_Je = particle_Fe[p].determinant()
             # par_Jp = particle_Fp[p].determinant()
@@ -442,7 +472,7 @@ def P2G():
             par_c = particle_c[p]
             par_T = particle_T[p]
             par_inv_lambda = 1.0 / particle_la[p]
-            scatter_cell(cell_mass, J, Je, c, T, inv_lambda, xp, par_J, par_Je, par_c, par_T, par_inv_lambda)
+            scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda)
     set_Jp() # Jp = J / Je for all cell
 
 @ti.kernel
@@ -635,7 +665,8 @@ def solve_temperature(dt):
     T.copy_from(temperature_solver.p)
 
 @ti.func
-def gather_vp(grid_v, xp, stagger):
+def gather_vp_u(xp):
+    stagger = vec2(0.0, 0.5)
     inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
@@ -648,14 +679,34 @@ def gather_vp(grid_v, xp, stagger):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
             weight = w[i][0] * w[j][1]
-            v_pic += weight * grid_v[base + offset]
+            v_pic += weight * u[base + offset]
             # print(weight * grid_v[base + offset])
 
     return v_pic
 
+@ti.func
+def gather_vp_v(xp):
+    stagger = vec2(0.5, 0.0)
+    inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
+    base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
+    fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
+
+    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+
+    v_pic = 0.0
+
+    for i in ti.static(range(3)):
+        for j in ti.static(range(3)):
+            offset = vec2(i, j)
+            weight = w[i][0] * w[j][1]
+            v_pic += weight * v[base + offset]
+            # print(weight * grid_v[base + offset])
+
+    return v_pic
 
 @ti.func
-def gather_cp(grid_v, xp, stagger):
+def gather_cp_x(xp):
+    stagger = vec2(0.0, 0.5)
     inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
@@ -672,12 +723,35 @@ def gather_cp(grid_v, xp, stagger):
             # weight = w[i][0] * w[j][1]
             # cp += 4 * weight * dpos * grid_v[base + offset] * inv_dx[0]
             weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
-            cp += weight_grad * grid_v[base + offset]
+            cp += weight_grad * u[base + offset]
 
     return cp
 
 @ti.func
-def gather_Tp(grid_T, xp):
+def gather_cp_y(xp):
+    stagger = vec2(0.5, 0.0)
+    inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
+    base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
+    fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
+
+    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+
+    cp = vec2(0.0, 0.0)
+
+    for i in ti.static(range(3)):
+        for j in ti.static(range(3)):
+            offset = vec2(i, j)
+            # dpos = offset.cast(ti.f32) - fx
+            # weight = w[i][0] * w[j][1]
+            # cp += 4 * weight * dpos * grid_v[base + offset] * inv_dx[0]
+            weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
+            cp += weight_grad * v[base + offset]
+
+    return cp
+
+@ti.func
+def gather_Tp(xp):
     inv_dx = vec2(inv_grid_x, inv_grid_y).cast(ti.f32)
     base = (xp * inv_dx - 0.5).cast(ti.i32)
     fx = xp * inv_dx - base.cast(ti.f32)
@@ -692,12 +766,14 @@ def gather_Tp(grid_T, xp):
             # dpos = offset.cast(ti.f32) - fx
             weight = w[i][0] * w[j][1]
             # cp += 4 * weight * dpos * grid_v[base + offset] * inv_dx[0]
-            Tp += weight * grid_T[base + offset]
+            Tp += weight * T[base + offset]
 
     return Tp
 
 @ti.func
-def gather_vp_grad(grid_v, xp, stagger, e):
+def gather_vp_grad_u(xp):
+    stagger = vec2(0.0, 0.5)
+    e = vec2(1.0, 0.0)
     inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
@@ -711,7 +787,28 @@ def gather_vp_grad(grid_v, xp, stagger, e):
             offset = vec2(i, j)
             # weight = w[i][0] * w[j][1]
             weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
-            vp_grad += (grid_v[base + offset] * e).outer_product(weight_grad)
+            vp_grad += (u[base + offset] * e).outer_product(weight_grad)
+    
+    return vp_grad
+
+@ti.func
+def gather_vp_grad_v(xp):
+    stagger = vec2(0.5, 0.0)
+    e = vec2(0.0, 1.0)
+    inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
+    base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
+    fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
+
+    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    vp_grad = ti.Matrix.zero(float, 2, 2)
+
+    for i in ti.static(range(3)):
+        for j in ti.static(range(3)):
+            offset = vec2(i, j)
+            # weight = w[i][0] * w[j][1]
+            weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
+            vp_grad += (v[base + offset] * e).outer_product(weight_grad)
     
     return vp_grad
 
@@ -723,29 +820,29 @@ def G2P():
         if particle_type[p] == P_FLUID:
             # update velocity
             xp = particle_positions[p]
-            u_pic = gather_vp(u, xp, stagger_u)
-            v_pic = gather_vp(v, xp, stagger_v)
+            u_pic = gather_vp_u(xp)
+            v_pic = gather_vp_v(xp)
             new_v_pic = vec2(u_pic, v_pic)
             particle_velocities[p] = new_v_pic
 
             # update c
-            cp_x[p] = gather_cp(u, xp, stagger_u)
-            cp_y[p] = gather_cp(v, xp, stagger_v)
+            cp_x[p] = gather_cp_x(xp)
+            cp_y[p] = gather_cp_y(xp)
 
             # update T
             particle_last_T[p] = particle_T[p]
-            particle_T[p] = gather_Tp(T, xp)
+            particle_T[p] = gather_Tp(xp)
 
 @ti.kernel
 def update_deformation_gradient():
-    stagger_u = vec2(0.0, 0.5)
-    stagger_v = vec2(0.5, 0.0)
+    # stagger_u = vec2(0.0, 0.5)
+    # stagger_v = vec2(0.5, 0.0)
     for p in ti.grouped(particle_positions):
         if particle_type[p] == P_FLUID:
             xp = particle_positions[p]
             vp_grad = ti.Matrix.zero(float, 2, 2)
-            vp_grad += gather_vp_grad(u, xp, stagger_u, vec2(1.0, 0.0))
-            vp_grad += gather_vp_grad(v, xp, stagger_v, vec2(0.0, 1.0))
+            vp_grad += gather_vp_grad_u(xp)
+            vp_grad += gather_vp_grad_v(xp)
             # update deformation gradient
             count = 1
             while (ti.Matrix.identity(float, 2) + dt * vp_grad).determinant() <= 0:
