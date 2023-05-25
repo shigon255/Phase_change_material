@@ -31,17 +31,19 @@ inv_grid_y = 1.0 / grid_y
 pspace_x = grid_x / npar
 pspace_y = grid_y / npar
 
-p_vol, p_rho = (grid_x * 0.5)**2, 1000
+p_vol, p_rho = (grid_x * 0.5)**2, 1e5
 p_mass = p_vol * p_rho
 g = -9.8
 substeps = 4
 
 # Young's modulas , Poisson's ratio and lame parameter
-E_solid_phase, nu_solid_phase = 9, 0.3  # Young's modulus(Gpa) and Poisson's ratio for ice 
+# E_solid_phase, nu_solid_phase = 9, 0.3  # Young's modulus(Gpa) and Poisson's ratio for ice 
+E_solid_phase, nu_solid_phase = 9 * 1e-4, 0.3  # Young's modulus(Gpa) and Poisson's ratio for ice 
 mu_solid_phase_init, lambda_solid_phase_init = E_solid_phase / (2 * (1 + nu_solid_phase)), E_solid_phase * nu_solid_phase / (
     (1 + nu_solid_phase) * (1 - 2 * nu_solid_phase))  # Lame parameters
 
-E_fluid_phase, nu_fluid_phase = 2, 0.45  # Young's modulus(Gpa) and Poisson's ratio for water
+# E_fluid_phase, nu_fluid_phase = 2, 0.45  # Young's modulus(Gpa) and Poisson's ratio for water
+E_fluid_phase, nu_fluid_phase = 2 * 1e-4, 0.45  # Young's modulus(Gpa) and Poisson's ratio for water
 mu_fluid_phase_init, lambda_fluid_phase_init = E_fluid_phase / (2 * (1 + nu_fluid_phase)), E_fluid_phase * nu_fluid_phase / (
     (1 + nu_fluid_phase) * (1 - 2 * nu_fluid_phase))  # Lame parameters
 
@@ -52,9 +54,9 @@ T_solid_phase_init = 373 # 373K
 # T_solid_init = 273
 T_fluid_phase_init = 273 # freezing point
 
-# heat capacity
-c_solid_phase_init = 2.093 # J/g*c
-c_fluid_phase_init = 4.182 # J/g*c
+# heat capacity (J/g*c)
+c_solid_phase_init = 2.093
+c_fluid_phase_init = 4.182
 
 # heat conductivity(W/mK)
 k_solid_phase_init = 2.18
@@ -493,7 +495,11 @@ def mark_cell():
         if not is_solid(i, j):
             # check if it's interior i.e. every face has mass
             # for cell(i, j), faces are u(i, j), u(i+1, j), v(i, j), v(i, j+1)
-            mass_thres = 1e-10
+            mass_thres = 1e-5
+            # print(u_face_mass[i, j])
+            # print(u_face_mass[i+1, j])
+            # print(v_face_mass[i, j])
+            # print(v_face_mass[i, j+1])
             if u_face_mass[i, j] > mass_thres and u_face_mass[i+1, j] > mass_thres and v_face_mass[i, j] > mass_thres and v_face_mass[i, j+1] > mass_thres:
                 cell_type[i, j] = utils.FLUID
             else:
@@ -581,12 +587,14 @@ def solve_pressure(dt):
     scale_A = dt / (p_rho * grid_x * grid_x)
     scale_b = 1 / grid_x
 
+    
     pressure_solver.u = u
     pressure_solver.v = v
     pressure_solver.Jp = Jp
     pressure_solver.Je = Je
     pressure_solver.inv_lambda = inv_lambda
     pressure_solver.cell_type = cell_type
+    
     pressure_solver.system_init(scale_A, scale_b)
     pressure_solver.solve(500)
 
@@ -614,11 +622,13 @@ def solve_temperature(dt):
     # scale_b = 1 / grid_x
     scale_b = 1
 
+    
     temperature_solver.k_u = k_u
     temperature_solver.k_v = k_v
     temperature_solver.old_T = T
     temperature_solver.c = c
     temperature_solver.cell_type = cell_type
+    
     temperature_solver.system_init(scale_A, scale_b)
     temperature_solver.solve(500)
 

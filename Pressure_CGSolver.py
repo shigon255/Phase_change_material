@@ -38,6 +38,9 @@ class Pressure_CGSolver:
         # assume that scale_b = 1 / grid_x
         for i, j in ti.ndrange(self.m, self.n):
             if self.cell_type[i, j] == utils.FLUID:
+                if self.Je[i, j] < 1e-10:
+                    print("Je: ", self.Je[i, j])    
+                    assert self.Je[i, j] < 1e-10
                 self.b[i,
                        j] = (-1) * (self.Je[i, j]-1) / (self.dt * self.Je[i, j]) + (-1) * scale_b * (self.u[i + 1, j] - self.u[i, j] +
                                             self.v[i, j + 1] - self.v[i, j])
