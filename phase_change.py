@@ -37,34 +37,33 @@ g = -9.8
 substeps = 4
 
 # Young's modulas , Poisson's ratio and lame parameter
-E_ice, nu_ice = 9, 0.3  # Young's modulus(Gpa) and Poisson's ratio for ice 
-mu_ice, lambda_ice = E_ice / (2 * (1 + nu_ice)), E_ice * nu_ice / (
-    (1 + nu_ice) * (1 - 2 * nu_ice))  # Lame parameters
+E_solid_phase, nu_solid_phase = 9, 0.3  # Young's modulus(Gpa) and Poisson's ratio for ice 
+mu_solid_phase_init, lambda_solid_phase_init = E_solid_phase / (2 * (1 + nu_solid_phase)), E_solid_phase * nu_solid_phase / (
+    (1 + nu_solid_phase) * (1 - 2 * nu_solid_phase))  # Lame parameters
 
-E_fluid, nu_fluid = 2, 0.45  # Young's modulus(Gpa) and Poisson's ratio for water
-mu_fluid, lambda_fluid = E_fluid / (2 * (1 + nu_fluid)), E_fluid * nu_fluid / (
-    (1 + nu_fluid) * (1 - 2 * nu_fluid))  # Lame parameters
+E_fluid_phase, nu_fluid_phase = 2, 0.45  # Young's modulus(Gpa) and Poisson's ratio for water
+mu_fluid_phase_init, lambda_fluid_phase_init = E_fluid_phase / (2 * (1 + nu_fluid_phase)), E_fluid_phase * nu_fluid_phase / (
+    (1 + nu_fluid_phase) * (1 - 2 * nu_fluid_phase))  # Lame parameters
 
 # Initial value
 T_air_init = 343 # 343K
-T_solid_init = 373 # 373K
+T_solid_phase_init = 373 # 373K
 # T_air_init = 273
 # T_solid_init = 273
-T_fluid_init = 273 # freezing point
+T_fluid_phase_init = 273 # freezing point
 
 # heat capacity
-c_ice = 2.093 # J/g*c
-c_fluid = 4.182 # J/g*c
+c_solid_phase_init = 2.093 # J/g*c
+c_fluid_phase_init = 4.182 # J/g*c
 
 # heat conductivity(W/mK)
-k_ice = 2
-k_fluid = 0.606
-k_solid = 0.5
-k_air = 0.06763
+k_solid_phase_init = 2.18
+k_fluid_phase_init = 0.606
+k_air_init = 0.04
 
 # phase change parameters
 freezing_point = 273
-ice_latent = 334
+latent = 334 # latent of ice
 
 # ----------------fields---------------
 # face part
@@ -150,8 +149,8 @@ cell_type = ti.field(dtype=ti.i32, shape=(m, n))
 
 
 # pressure solver
-preconditioning = 'MG'
-# preconditioning = None
+# preconditioning = 'MG'
+preconditioning = None
 
 MIC_blending = 0.97
 
@@ -171,10 +170,10 @@ elif preconditioning == 'MG':
     pressure_solver = Pressure_MGPCGSolver(m, n, u, v, dt, Jp, Je, inv_lambda, cell_type, multigrid_level=mg_level,
                          pre_and_post_smoothing=pre_and_post_smoothing,
                          bottom_smoothing=bottom_smoothing)
-    # temperature_solver = Temperature_MGPCGSolver(m, n, k_u, k_v, T, c, cell_type, multigrid_level=mg_level,
-      #                    pre_and_post_smoothing=pre_and_post_smoothing,
-        #                  bottom_smoothing=bottom_smoothing)
-    temperature_solver = Temperature_CGSolver(m, n, k_u, k_v, T, c, cell_type)
+    temperature_solver = Temperature_MGPCGSolver(m, n, k_u, k_v, T, c, cell_type, multigrid_level=mg_level,
+                         pre_and_post_smoothing=pre_and_post_smoothing,
+                         bottom_smoothing=bottom_smoothing)
+    # temperature_solver = Temperature_CGSolver(m, n, k_u, k_v, T, c, cell_type)
 
 # save to gif
 result_dir = "./results"
@@ -288,10 +287,10 @@ def init():
             fv[i, j] = 0.0
 
         for i, j in k_u:
-            k_u[i, j] = 0 # for ice, 2.18 W/mK at 273K
+            k_u[i, j] = k_solid_phase_init # for ice, 2.18 W/mK at 273K
 
         for i, j in k_v:
-            k_v[i, j] = 0 # for ice, 2.18 W/mK at 273K
+            k_v[i, j] = k_solid_phase_init # for ice, 2.18 W/mK at 273K
 
         for i, j in cell_mass:
             cell_mass[i, j] = 0.0
@@ -303,9 +302,9 @@ def init():
         for i, j in J:
             J[i, j] = 1
             Je[i, j] = 1
-            c[i, j] = c_ice # for ice, 2093 J/K
-            T[i, j] = T_fluid_init # at 273 K
-            inv_lambda[i, j] = 1 / lambda_ice
+            c[i, j] = c_solid_phase_init # for ice, 2093 J/K
+            T[i, j] = T_solid_phase_init # at 273 K
+            inv_lambda[i, j] = 1.0 / lambda_solid_phase_init
 
     @ti.kernel
     def init_particles():
@@ -323,14 +322,14 @@ def init():
             cp_y[i, j, ix, jx] = vec2(0.0, 0.0)
             particle_Fe[i, j, ix, jx] = ti.Matrix.identity(dt = ti.f32, n=2)
             particle_Fp[i, j, ix, jx] = ti.Matrix.identity(dt = ti.f32, n=2)
-            particle_mu[i, j, ix, jx] = mu_ice
-            particle_la[i, j, ix, jx] = lambda_ice
-            particle_T[i, j, ix, jx] = T_fluid_init
-            particle_last_T[i, j, ix, jx] = T_fluid_init
+            particle_mu[i, j, ix, jx] = mu_solid_phase_init
+            particle_la[i, j, ix, jx] = lambda_solid_phase_init
+            particle_T[i, j, ix, jx] = T_solid_phase_init
+            particle_last_T[i, j, ix, jx] = T_solid_phase_init
             particle_U[i, j, ix, jx] = 0  # [0, Lp], initialilly at 0
-            particle_c[i, j, ix, jx] = c_ice # for ice J/g * C
-            particle_k[i, j, ix, jx] = k_ice
-            particle_l[i, j, ix, jx] = p_mass * ice_latent # for ice 334J/g to melt
+            particle_c[i, j, ix, jx] = c_solid_phase_init # for ice J/g * C
+            particle_k[i, j, ix, jx] = k_solid_phase_init
+            particle_l[i, j, ix, jx] = p_mass * latent # for ice 334J/g to melt
             particle_Phase[i, j, ix, jx] = P_SOLID_PHASE
 
 
@@ -371,7 +370,7 @@ def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, PFT, stagger, kp, e
             weight = w[i][0] * w[j][1] # x, y directions, respectively
 
             # print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
-            grid_v[base + offset] += weight * p_mass * (vp + cp.dot(dpos))
+            grid_v[base + offset] += weight * p_mass * (vp + ti.math.dot(cp, dpos))
             grid_k[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
             grid_m[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
             grid_f[base + offset] += ti.math.dot(e, (-PFT) @ weight_grad )
@@ -431,9 +430,9 @@ def P2G():
             par_f = p_vol * par_f # f is 2 by 2 matrix, whilch will be multiplid by weight gradient
             # face
             scatter_face(u, u_face_mass, k_u, fu, xp, particle_velocities[p][0],
-                            cp_x[p], par_f, stagger_u, particle_k[p], vec2(0.0, 1.0))
+                            cp_x[p], par_f, stagger_u, particle_k[p], vec2(1.0, 0.0))
             scatter_face(v, v_face_mass, k_v, fv, xp, particle_velocities[p][1],
-                            cp_y[p], par_f, stagger_v, particle_k[p], vec2(1.0, 0.0))
+                            cp_y[p], par_f, stagger_v, particle_k[p], vec2(0.0, 1.0))
             # cell
             # par_Je = particle_Fe[p].determinant()
             # par_Jp = particle_Fp[p].determinant()
@@ -494,7 +493,7 @@ def mark_cell():
         if not is_solid(i, j):
             # check if it's interior i.e. every face has mass
             # for cell(i, j), faces are u(i, j), u(i+1, j), v(i, j), v(i, j+1)
-            mass_thres = 1e-6
+            mass_thres = 1e-10
             if u_face_mass[i, j] > mass_thres and u_face_mass[i+1, j] > mass_thres and v_face_mass[i, j] > mass_thres and v_face_mass[i, j+1] > mass_thres:
                 cell_type[i, j] = utils.FLUID
             else:
@@ -533,23 +532,23 @@ def face_normalize():
 def cell_normalize():
     for i, j in J:
         if cell_mass[i, j] > 0:
-            J[i, j] = J[i, j] / cell_mass[i, j]
+            J[i, j] /= cell_mass[i, j]
 
     for i, j in Je:
         if cell_mass[i, j] > 0:
-            Je[i, j] = Je[i, j] / cell_mass[i, j]
+            Je[i, j] /= cell_mass[i, j]
 
     for i, j in c:
         if cell_mass[i, j] > 0:
-            c[i, j] = c[i, j] / cell_mass[i, j]
+            c[i, j] /= cell_mass[i, j]
 
     for i, j in T:
         if cell_mass[i, j] > 0:
-            T[i, j] = T[i, j] / cell_mass[i, j]
+            T[i, j] /= cell_mass[i, j]
 
     for i, j in inv_lambda:
         if cell_mass[i, j] > 0:
-            inv_lambda[i, j] = inv_lambda[i, j] / cell_mass[i, j]
+            inv_lambda[i, j] /= cell_mass[i, j]
     
 @ti.kernel
 def apply_force(dt: ti.f32):
@@ -561,9 +560,9 @@ def apply_force(dt: ti.f32):
     for i, j in v:
         v[i, j] += (fv[i, j]/v_face_mass[i, j]) * dt
 
-    # gravity(only u direction)
-    for i, j in u:
-        u[i, j] += g * dt
+    # gravity(only v(y) direction)
+    for i, j in v:
+        v[i, j] += g * dt
         
 @ti.kernel
 def enforce_boundary():
@@ -735,8 +734,8 @@ def update_deformation_gradient():
         if particle_type[p] == P_FLUID:
             xp = particle_positions[p]
             vp_grad = ti.Matrix.zero(float, 2, 2)
-            vp_grad += gather_vp_grad(u, xp, stagger_u, vec2(0.0, 1.0))
-            vp_grad += gather_vp_grad(v, xp, stagger_v, vec2(1.0, 0.0))
+            vp_grad += gather_vp_grad(u, xp, stagger_u, vec2(1.0, 0.0))
+            vp_grad += gather_vp_grad(v, xp, stagger_v, vec2(0.0, 1.0))
             # update deformation gradient
             count = 1
             while (ti.Matrix.identity(float, 2) + dt * vp_grad).determinant() <= 0:
@@ -747,14 +746,13 @@ def update_deformation_gradient():
                 update_term = update_term @ (ti.Matrix.identity(float, 2) + dt * vp_grad)
             new_particle_Fe = update_term @ particle_Fe[p]
             if particle_Phase[p] == P_FLUID_PHASE:
-                new_particle_Fe = ti.math.pow(new_particle_Fe.determinant(), 1/2) * ti.Matrix.identity(dt = ti.f32, n=2)
+                new_particle_Fe = ti.math.sqrt(new_particle_Fe.determinant()) * ti.Matrix.identity(float, 2)
             particle_Fe[p] = new_particle_Fe
 
 @ti.kernel
 def advect_particle(dt: ti.f32):
     for p in ti.grouped(particle_positions):
         if particle_type[p] == P_FLUID:
-            tol = 1e3
             pos = particle_positions[p]
             pv = particle_velocities[p]
             # print("old pos: ", pos)
@@ -789,11 +787,13 @@ def update_heat_parameters():
                     particle_U[p] += particle_c[p] * p_mass * (particle_T[p] - particle_last_T[p])
                     if particle_U[p] > particle_l[p]:
                         particle_Phase[p] = P_FLUID_PHASE
-                        particle_mu[p] = mu_fluid
-                        particle_la[p] = lambda_fluid
-                        particle_c[p] = c_fluid
-                        particle_k[p] = k_fluid
+                        particle_mu[p] = mu_fluid_phase_init
+                        particle_la[p] = lambda_fluid_phase_init
+                        particle_c[p] = c_fluid_phase_init
+                        particle_k[p] = k_fluid_phase_init
                         particle_U[p] = particle_l[p]
+                        particle_T[p] = freezing_point
+                        particle_last_T[p] = freezing_point
                     else:
                         particle_T[p] = particle_last_T[p]
             elif particle_Phase[p] == P_FLUID_PHASE:
@@ -802,11 +802,13 @@ def update_heat_parameters():
                     particle_U[p] += particle_c[p] * p_mass * (particle_T[p] - particle_last_T[p])
                     if  particle_U[p] < 0:
                         particle_Phase[p] = P_FLUID_PHASE
-                        particle_mu[p] = mu_fluid
-                        particle_la[p] = lambda_fluid
-                        particle_c[p] = c_fluid
-                        particle_k[p] = k_fluid
+                        particle_mu[p] = mu_solid_phase_init
+                        particle_la[p] = lambda_solid_phase_init
+                        particle_c[p] = c_solid_phase_init
+                        particle_k[p] = k_solid_phase_init
                         particle_U[p] = 0.0
+                        particle_T[p] = freezing_point
+                        particle_last_T[p] = freezing_point
                     else:
                         particle_T[p] = particle_last_T[p]
 #  -------------Main algorithm-----------
