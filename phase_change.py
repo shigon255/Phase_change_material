@@ -46,10 +46,10 @@ mu_fluid, lambda_fluid = E_fluid / (2 * (1 + nu_fluid)), E_fluid * nu_fluid / (
     (1 + nu_fluid) * (1 - 2 * nu_fluid))  # Lame parameters
 
 # Initial value
-# T_air_init = 343 # 343K
-# T_solid_init = 373 # 373K
-T_air_init = 273
-T_solid_init = 273
+T_air_init = 343 # 343K
+T_solid_init = 373 # 373K
+# T_air_init = 273
+# T_solid_init = 273
 T_fluid_init = 273 # freezing point
 
 # heat capacity
@@ -556,10 +556,10 @@ def apply_force(dt: ti.f32):
 
     # internal force (have been calculated in P2G)
     for i, j in u:
-        u[i, j] += fu[i, j] * dt
+        u[i, j] += (fu[i, j]/u_face_mass[i, j]) * dt
     
     for i, j in v:
-        v[i, j] += fv[i, j] * dt
+        v[i, j] += (fv[i, j]/v_face_mass[i, j]) * dt
 
     # gravity(only u direction)
     for i, j in u:
