@@ -67,7 +67,7 @@ class Temperature_CGSolver:
                     self.Adiag[i, j] += new_scale_A
                 if self.cell_type[i + 1, j] == utils.FLUID:
                     self.Adiag[i, j] += new_scale_A
-                    self.Ax[i, j] = -new_scale_A * k_u[i, j]
+                    self.Ax[i, j] = -new_scale_A * self.k_u[i, j]
                 elif self.cell_type[i + 1, j] == utils.AIR:
                     self.Adiag[i, j] += new_scale_A
 
@@ -75,7 +75,7 @@ class Temperature_CGSolver:
                     self.Adiag[i, j] += new_scale_A
                 if self.cell_type[i, j + 1] == utils.FLUID:
                     self.Adiag[i, j] += new_scale_A
-                    self.Ay[i, j] = -new_scale_A * k_v[i, j]
+                    self.Ay[i, j] = -new_scale_A * self.k_v[i, j]
                 elif self.cell_type[i, j + 1] == utils.AIR:
                     self.Adiag[i, j] += new_scale_A
 

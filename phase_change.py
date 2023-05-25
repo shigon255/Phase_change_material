@@ -31,7 +31,7 @@ inv_grid_y = 1.0 / grid_y
 pspace_x = grid_x / npar
 pspace_y = grid_y / npar
 
-p_vol, p_rho = (grid_x * 0.5)**2, 1
+p_vol, p_rho = (grid_x * 0.5)**2, 1000
 p_mass = p_vol * p_rho
 g = -9.8
 substeps = 4
@@ -41,13 +41,15 @@ E_ice, nu_ice = 9, 0.3  # Young's modulus(Gpa) and Poisson's ratio for ice
 mu_ice, lambda_ice = E_ice / (2 * (1 + nu_ice)), E_ice * nu_ice / (
     (1 + nu_ice) * (1 - 2 * nu_ice))  # Lame parameters
 
-E_fluid, nu_fluid = 2, 0.45  # Young's modulus(Gpa) and Poisson's ratio for ice 
+E_fluid, nu_fluid = 2, 0.45  # Young's modulus(Gpa) and Poisson's ratio for water
 mu_fluid, lambda_fluid = E_fluid / (2 * (1 + nu_fluid)), E_fluid * nu_fluid / (
     (1 + nu_fluid) * (1 - 2 * nu_fluid))  # Lame parameters
 
 # Initial value
-T_air_init = 343 # 343K
-T_solid_init = 373 # 373K
+# T_air_init = 343 # 343K
+# T_solid_init = 373 # 373K
+T_air_init = 273
+T_solid_init = 273
 T_fluid_init = 273 # freezing point
 
 # heat capacity
@@ -148,8 +150,8 @@ cell_type = ti.field(dtype=ti.i32, shape=(m, n))
 
 
 # pressure solver
-# preconditioning = 'MG'
-preconditioning = None
+preconditioning = 'MG'
+# preconditioning = None
 
 MIC_blending = 0.97
 
@@ -347,7 +349,7 @@ def deformation_gradient_add_plasticity():
                 sig[d, d] = ti.min(ti.max(sig[d, d], 1 - 2.5e-2), 1 + 4.5e-3)  # Plasticity
             Jp = particle_Fp[p].determinant()
             # Note: this part is (Jp)^(1/d), here d = 2
-            particle_Fe[p] = ti.sqrt(Jp) * particle_Fe[p]
+            particle_Fe[p] = ti.sqrt(Jp) * U@sig@V
             particle_Fp[p] = (1 / ti.sqrt(Jp)) * particle_Fp[p]
 
 @ti.func
@@ -360,7 +362,7 @@ def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, PFT, stagger, kp, e
     # Note, in SSJCTS14, they use cubic B-spline
     w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
     w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
-    print("vp: ", vp)
+    # print("vp: ", vp)
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
@@ -368,7 +370,7 @@ def scatter_face(grid_v, grid_m, grid_k, grid_f, xp, vp, cp, PFT, stagger, kp, e
             weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
             weight = w[i][0] * w[j][1] # x, y directions, respectively
 
-            print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
+            # print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
             grid_v[base + offset] += weight * p_mass * (vp + cp.dot(dpos))
             grid_k[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
             grid_m[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
@@ -416,6 +418,12 @@ def P2G():
             par_F = particle_Fe[p] @ particle_Fp[p]
             par_Je = particle_Fe[p].determinant()
             par_Jp = particle_Fp[p].determinant()
+            min_thres = 1e-10
+            if(par_Je < min_thres or par_Jp < min_thres):
+                print("par_Je: ", par_Je)
+                print("Fe: ", particle_Fe[p])
+                print("par_Jp: ", par_Jp)
+                print("Fp: ", particle_Fp[p])
             par_J = par_Je * par_Jp
             U, sig, V = ti.svd(par_F)
             # P(F) F^T
@@ -574,6 +582,12 @@ def solve_pressure(dt):
     scale_A = dt / (p_rho * grid_x * grid_x)
     scale_b = 1 / grid_x
 
+    pressure_solver.u = u
+    pressure_solver.v = v
+    pressure_solver.Jp = Jp
+    pressure_solver.Je = Je
+    pressure_solver.inv_lambda = inv_lambda
+    pressure_solver.cell_type = cell_type
     pressure_solver.system_init(scale_A, scale_b)
     pressure_solver.solve(500)
 
@@ -601,6 +615,11 @@ def solve_temperature(dt):
     # scale_b = 1 / grid_x
     scale_b = 1
 
+    temperature_solver.k_u = k_u
+    temperature_solver.k_v = k_v
+    temperature_solver.old_T = T
+    temperature_solver.c = c
+    temperature_solver.cell_type = cell_type
     temperature_solver.system_init(scale_A, scale_b)
     temperature_solver.solve(500)
 
@@ -725,8 +744,8 @@ def update_deformation_gradient():
                 vp_grad /= 2
             update_term = ti.Matrix.identity(float, 2)
             for i in range(count):
-                update_term *= vp_grad
-            new_particle_Fe = update_term * particle_Fe[p]
+                update_term = update_term @ (ti.Matrix.identity(float, 2) + dt * vp_grad)
+            new_particle_Fe = update_term @ particle_Fe[p]
             if particle_Phase[p] == P_FLUID_PHASE:
                 new_particle_Fe = ti.math.pow(new_particle_Fe.determinant(), 1/2) * ti.Matrix.identity(dt = ti.f32, n=2)
             particle_Fe[p] = new_particle_Fe
@@ -845,7 +864,7 @@ def onestep(dt):
 
     # 8. Solve heat equation
     print("-----------start solve temperature---------------")
-    # solve_temperature(dt)
+    solve_temperature(dt)
     print("-----------end solve temperature---------------")
 
     # 9. G2P
