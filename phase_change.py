@@ -31,8 +31,8 @@ inv_grid_y = 1.0 / grid_y
 pspace_x = grid_x / npar
 pspace_y = grid_y / npar
 
-p_vol, p_rho = (grid_x * 0.5)**2, 1e5
-p_mass = p_vol * p_rho
+p_vol, p_rho = (grid_x * 0.5)**2, 100 # vol: m^2, rho: kg/m^2
+p_mass = p_vol * p_rho # mass: kg
 g = -9.8
 substeps = 4
 
@@ -54,9 +54,9 @@ T_solid_phase_init = 373 # 373K
 # T_solid_phase_init = 200
 T_fluid_phase_init = 273 # freezing point
 
-# heat capacity (J/g*c)
-c_solid_phase_init = 2.093
-c_fluid_phase_init = 4.182
+# heat capacity (J/kg*c)
+c_solid_phase_init = 2093
+c_fluid_phase_init = 4182
 
 # heat conductivity(W/mK)
 k_solid_phase_init = 2.18
@@ -64,8 +64,8 @@ k_fluid_phase_init = 0.606
 k_air_init = 0.04
 
 # phase change parameters
-freezing_point = 273
-latent = 334 # latent of ice
+freezing_point = 273 # 273K
+latent = 382000 # latent of ice，J/kg
 
 # ----------------fields---------------
 # face part
@@ -82,6 +82,10 @@ fv = ti.field(dtype=ti.f32, shape=(m, n + 1))
 # heat conductivity field
 k_u = ti.field(dtype=ti.f32, shape=(m + 1, n))
 k_v = ti.field(dtype=ti.f32, shape=(m, n + 1))
+
+# volume
+vol_u = ti.field(dtype=ti.f32, shape=(m + 1, n))
+vol_v = ti.field(dtype=ti.f32, shape=(m, n + 1))
 
 # cell part
 cell_mass = ti.field(dtype=ti.f32, shape=(m, n))
@@ -165,7 +169,7 @@ dt = 0.01
 
 if preconditioning == None:
     # solver = CGSolver(m, n, u, v, cell_type)
-    pressure_solver = Pressure_CGSolver(m, n, u, v, dt, Jp, Je, inv_lambda, cell_type)
+    pressure_solver = Pressure_CGSolver(m, n, u, v, dt, Jp, Je, inv_lambda, cell_type, vol_u, vol_v, u_face_mass, v_face_mass)
     temperature_solver = Temperature_CGSolver(m, n, k_u, k_v, T, c, cell_type)
 elif preconditioning == 'MIC':
     solver = MICPCGSolver(m, n, u, v, cell_type, MIC_blending=MIC_blending)
@@ -310,10 +314,16 @@ def init():
             fv[i, j] = 0.0
 
         for i, j in k_u:
-            k_u[i, j] = k_solid_phase_init # for ice, 2.18 W/mK at 273K
+            k_u[i, j] = 0
 
         for i, j in k_v:
-            k_v[i, j] = k_solid_phase_init # for ice, 2.18 W/mK at 273K
+            k_v[i, j] = 0
+
+        for i, j in vol_u:
+            vol_u[i, j] = 0.0
+        
+        for i, j in vol_v:
+            vol_v[i, j] = 0.0
 
         for i, j in cell_mass:
             cell_mass[i, j] = 0.0
@@ -325,9 +335,9 @@ def init():
         for i, j in J:
             J[i, j] = 1
             Je[i, j] = 1
-            c[i, j] = c_solid_phase_init # for ice, 2093 J/K
-            T[i, j] = T_solid_phase_init # at 273 K
-            inv_lambda[i, j] = 1.0 / lambda_solid_phase_init
+            c[i, j] = 0
+            T[i, j] = 0
+            inv_lambda[i, j] = 0
 
     @ti.kernel
     def init_particles():
@@ -352,9 +362,9 @@ def init():
             particle_T[i, j, ix, jx] = T_solid_phase_init
             particle_last_T[i, j, ix, jx] = T_solid_phase_init
             particle_U[i, j, ix, jx] = 0  # [0, Lp], initialilly at 0
-            particle_c[i, j, ix, jx] = c_solid_phase_init # for ice J/g * C
+            particle_c[i, j, ix, jx] = c_solid_phase_init # for ice J/kg * C
             particle_k[i, j, ix, jx] = k_solid_phase_init
-            particle_l[i, j, ix, jx] = p_mass * latent # for ice 334J/g to melt            
+            particle_l[i, j, ix, jx] = p_mass * latent # for ice J/kg to melt            
 
 
     # init_dambreak(4, 4)
@@ -369,8 +379,10 @@ def deformation_gradient_add_plasticity():
     for p in ti.grouped(particle_positions):
         if particle_type[p] == P_FLUID:
             U, sig, V = ti.svd(particle_Fe[p])
+            theta_c = 2.5e-2
+            theta_s = 4.5e-3
             for d in ti.static(range(2)):
-                sig[d, d] = ti.min(ti.max(sig[d, d], 1 - 2.5e-2), 1 + 4.5e-3)  # Plasticity
+                sig[d, d] = ti.min(ti.max(sig[d, d], 1 - theta_c), 1 + theta_s)  # Plasticity
             Jp = particle_Fp[p].determinant()
             # Note: this part is (Jp)^(1/d), here d = 2
             particle_Fe[p] = ti.sqrt(Jp) * U@sig@V
@@ -387,6 +399,7 @@ def scatter_face_u(xp, vp, cp, PFT, kp):
     # print(xp)
     # Note, in SSJCTS14, they use cubic B-spline
     w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
+    # w_cdf = [1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0]
     w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
     # print("vp: ", vp)
     for i in ti.static(range(3)):
@@ -395,12 +408,14 @@ def scatter_face_u(xp, vp, cp, PFT, kp):
             dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
             weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
             weight = w[i][0] * w[j][1] # x, y directions, respectively
+            # weight_cdf = w_cdf[i] * w_cdf[j]
 
             su = base + offset
             u[base + offset] += weight * p_mass * (vp + ti.math.dot(cp, dpos))
             k_u[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
             u_face_mass[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
             fu[base + offset] += ti.math.dot(e, (-PFT) @ weight_grad )
+            # vol_u[base + offset] += weight_cdf
 
 @ti.func
 def scatter_face_v(xp, vp, cp, PFT, kp):
@@ -413,6 +428,7 @@ def scatter_face_v(xp, vp, cp, PFT, kp):
     # print(xp)
     # Note, in SSJCTS14, they use cubic B-spline
     w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
+    # w_cdf = [1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0]
     w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
     # print("vp: ", vp)
     for i in ti.static(range(3)):
@@ -421,12 +437,14 @@ def scatter_face_v(xp, vp, cp, PFT, kp):
             dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
             weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
             weight = w[i][0] * w[j][1] # x, y directions, respectively
+            # weight_cdf = w_cdf[i] * w_cdf[j]
 
             # print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
             v[base + offset] += weight * p_mass * (vp + ti.math.dot(cp, dpos))
             k_v[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
             v_face_mass[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
             fv[base + offset] += ti.math.dot(e, (-PFT) @ weight_grad )
+            # vol_v[base + offset] += weight_cdf
 
 @ti.func
 def scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda):
@@ -461,8 +479,6 @@ def scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda):
                 print("pmass: ", p_mass)
                 print("weight: ", weight)
             """
-
-            
 
 @ti.func
 def set_Jp():
@@ -518,6 +534,8 @@ def clear_field():
     fv.fill(0.0)
     k_u.fill(0.0)
     k_v.fill(0.0)
+    vol_u.fill(0.0)
+    vol_v.fill(0.0)
     cell_mass.fill(0.0)
     p.fill(0.0)
     J.fill(0.0)
@@ -624,10 +642,12 @@ def apply_force(dt: ti.f32):
 
     # internal force (have been calculated in P2G)
     for i, j in u:
-        u[i, j] += (fu[i, j]/u_face_mass[i, j]) * dt
+        if u_face_mass[i, j] > 0:
+            u[i, j] += (fu[i, j]/u_face_mass[i, j]) * dt
     
     for i, j in v:
-        v[i, j] += (fv[i, j]/v_face_mass[i, j]) * dt
+        if v_face_mass[i, j] > 0:
+            v[i, j] += (fv[i, j]/v_face_mass[i, j]) * dt
 
     # gravity(only v(y) direction)
     for i, j in v:
@@ -638,18 +658,18 @@ def enforce_boundary():
     # u solid
     for i, j in u:
         if is_solid(i - 1, j) or is_solid(i, j):
-            u[i, j] = 0.0
-            # u[i, j] = -u[i, j]        
+            # u[i, j] = 0.0
+            u[i, j] = -u[i, j]        
 
     # v solid
     for i, j in v:
         if is_solid(i, j - 1) or is_solid(i, j):
-            v[i, j] = 0.0
-            # v[i, j] = -v[i, j]
+            # v[i, j] = 0.0
+            v[i, j] = -v[i, j]
 
 
 def solve_pressure(dt: ti.f32):
-    scale_A = dt / (p_rho * grid_x * grid_x)
+    scale_A = dt / (grid_x * grid_x)
     scale_b = 1 / grid_x
 
     """
@@ -668,14 +688,15 @@ def solve_pressure(dt: ti.f32):
 
 @ti.kernel
 def apply_pressure(dt: ti.f32):
-    scale = dt / (p_rho * grid_x)
+    # scale = dt / (p_rho * grid_x)
+    scale = dt / grid_x
 
     for i, j in ti.ndrange(m, n):
         if is_fluid(i - 1, j) or is_fluid(i, j):
             if is_solid(i - 1, j) or is_solid(i, j):
                 u[i, j] = 0
             else:
-                u[i, j] += scale * (p[i, j] - p[i - 1, j])
+                u[i, j] += scale * (p[i, j] - p[i - 1, j]) * (1 / (u_face_mass[i, j] * 2))
                 if isnan(u[i, j]):
                     print("apply pressure to let u be nan")
                     print("u[i, j]: ", u[i, j])
@@ -686,7 +707,7 @@ def apply_pressure(dt: ti.f32):
             if is_solid(i, j - 1) or is_solid(i, j):
                 v[i, j] = 0
             else:
-                v[i, j] += scale * (p[i, j] - p[i, j - 1])
+                v[i, j] += scale * (p[i, j] - p[i, j - 1]) * (1 / (v_face_mass[i, j] * 2))
                 if isnan(v[i, j]):
                     print("apply pressure to let v be nan")
                     print("v[i, j]: ", v[i, j])
@@ -698,13 +719,13 @@ def solve_temperature(dt: ti.f32):
     # scale_b = 1 / grid_x
     scale_b = 1
 
-    
+    """
     temperature_solver.k_u.copy_from(k_u)
     temperature_solver.k_v.copy_from(k_v)
     temperature_solver.old_T.copy_from(T)
     temperature_solver.c.copy_from(c)
     temperature_solver.cell_type.copy_from(cell_type)
-    
+    """
     temperature_solver.system_init(scale_A, scale_b)
     temperature_solver.solve(500)
 
@@ -1048,6 +1069,9 @@ def onestep(dt):
     solve_temperature(dt)
     print("-----------end solve temperature---------------")
 
+    print("-----------start enforce boundary 3---------------")
+    enforce_boundary()
+    print("-----------end enforce boundary 3---------------")
     # 9. G2P
     print("-----------start G2P---------------")
     G2P()

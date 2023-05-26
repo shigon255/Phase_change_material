@@ -4,7 +4,7 @@ import utils
 
 @ti.data_oriented
 class Pressure_CGSolver:
-    def __init__(self, m, n, u, v, dt, Jp, Je, inv_lambda, cell_type):
+    def __init__(self, m, n, u, v, dt, Jp, Je, inv_lambda, cell_type, vol_u, vol_v, u_face_mass, v_face_mass):
         self.m = m
         self.n = n
         self.u = u
@@ -12,6 +12,10 @@ class Pressure_CGSolver:
         self.dt = dt
         self.Jp = Jp
         self.Je = Je
+        self.vol_u = vol_u
+        self.vol_v = vol_v
+        self.u_face_mass = u_face_mass
+        self.v_face_mass = v_face_mass
         self.inv_lambda = inv_lambda
         self.cell_type = cell_type
 
@@ -57,23 +61,23 @@ class Pressure_CGSolver:
                     self.b[i, j] += scale_b * (self.v[i, j + 1] - 0)
 
         # define left handside of linear system
-        # assume that scale_A = dt / (grid_x^2 * rho)
+        # assume that scale_A = dt / (grid_x^2)
         for i, j in ti.ndrange(self.m, self.n):
             self.Adiag[i, j] += (self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]
             if self.cell_type[i, j] == utils.FLUID:
                 if self.cell_type[i - 1, j] == utils.FLUID:
-                    self.Adiag[i, j] += scale_A
+                    self.Adiag[i, j] += scale_A * (1 / (self.u_face_mass[i, j] * 2))
                 if self.cell_type[i + 1, j] == utils.FLUID:
-                    self.Adiag[i, j] += scale_A
-                    self.Ax[i, j] = -scale_A
+                    self.Adiag[i, j] += scale_A * (1 / (self.u_face_mass[i+1, j] * 2))
+                    self.Ax[i, j] = -scale_A * (1 / (self.u_face_mass[i+1, j] * 2))
                 elif self.cell_type[i + 1, j] == utils.AIR:
                     self.Adiag[i, j] += scale_A
 
                 if self.cell_type[i, j - 1] == utils.FLUID:
-                    self.Adiag[i, j] += scale_A
+                    self.Adiag[i, j] += scale_A * (1 / (self.v_face_mass[i, j] * 2))
                 if self.cell_type[i, j + 1] == utils.FLUID:
-                    self.Adiag[i, j] += scale_A
-                    self.Ay[i, j] = -scale_A
+                    self.Adiag[i, j] += scale_A * (1 / (self.v_face_mass[i, j+1] * 2))
+                    self.Ay[i, j] = -scale_A * (1 / (self.v_face_mass[i, j+1] * 2))
                 elif self.cell_type[i, j + 1] == utils.AIR:
                     self.Adiag[i, j] += scale_A
     
