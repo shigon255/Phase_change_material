@@ -392,6 +392,34 @@ def deformation_gradient_add_plasticity():
             particle_Fp[p] = (1 / ti.sqrt(Jp)) * particle_Fp[p]
 
 @ti.func
+def cubic_bspline_kernal(fx):
+    w = [vec2(1.0, 1.0), vec2(1.0, 1.0), vec2(1.0, 1.0)]
+    if fx[0] > 1.0:
+        w[0][0] *= ( (-1.0 / 6.0) * (fx[0] ** 3) + (fx[0] ** 2) - 2 * fx[0] + (4.0 / 3.0))
+    else:
+        w[0][0] *= ((1.0 / 2.0) * (fx[0] ** 3) - (fx[0] ** 2) + (2.0 / 3.0))
+    if fx[1] > 1.0:
+        w[0][1] *= ( (-1.0 / 6.0) * (fx[1] ** 3) + (fx[1] ** 2) - 2 * fx[1] + (4.0 / 3.0))
+    else:
+        w[0][1] *= ((1.0 / 2.0) * (fx[1] ** 3) - (fx[1] ** 2) + (2.0 / 3.0))
+    
+    w[1] = ((1.0 / 2.0) * (ti.abs(fx-1) ** 3) - (ti.abs(fx-1) ** 2) + (2.0 / 3.0))
+    
+    if fx[0] < -1.0:
+        w[2][0] *= ( (-1.0 / 6.0) * (ti.abs(fx[0]-2) ** 3) + ((fx[0]-2) ** 2) - 2 * ti.abs(fx[0]-2) + (4.0 / 3.0))
+    else:
+        w[2][0] *= ((1.0 / 2.0) * (ti.abs(fx[0]-2) ** 3) - ((fx[0]-2) ** 2) + (2.0 / 3.0))
+    if fx[1] < -1.0:
+        w[2][1] *= ( (-1.0 / 6.0) * (ti.abs(fx[1]-2) ** 3) + ((fx[1]-2) ** 2) - 2 * ti.abs(fx[1]-2) + (4.0 / 3.0))
+    else:
+        w[2][1] *= ((1.0 / 2.0) * (ti.abs(fx[1]-2) ** 3) - ((fx[1]-2) ** 2) + (2.0 / 3.0))
+    return w
+
+@ti.func
+def cubic_bspline_kernal_grad(fx):
+    return [(-1.0/2.0) * (fx ** 2) + 2 * fx - 2, (3.0 / 2.0) * ((fx-1) ** 2) - (2 * (fx-1)), (-1.0/2.0) * ((fx-2) ** 2) + 2 * (fx-2) - 2]
+
+@ti.func
 def scatter_face_u(xp, vp, cp, PFT, kp):
     stagger = vec2(0.0, 0.5)
     e = vec2(1.0, 0.0)
@@ -404,27 +432,17 @@ def scatter_face_u(xp, vp, cp, PFT, kp):
     # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
 
     # cubic spline
-    w = []
-    if fx > 1.0:
-        w.append( (-1.0 / 6.0) * (fx ** 3) + (fx ** 2) - 2 * fx + (4.0 / 3.0))
-    else:
-        w.append((1.0 / 2.0) * (fx ** 3) - (fx ** 2) + (2.0 / 3.0))
-    
-    w.append((1.0 / 2.0) * (ti.abs(fx-1) ** 3) - (ti.abs(fx-1) ** 2) + (2.0 / 3.0))
-    
-    if fx < -1.0:
-        w.append( (-1.0 / 6.0) * (ti.abs(fx-2) ** 3) + ((fx-2) ** 2) - 2 * ti.abs(fx-2) + (4.0 / 3.0))
-    else:
-        w.append((1.0 / 2.0) * (ti.abs(fx-2) ** 3) - ((fx-2) ** 2) + (2.0 / 3.0))
-    
+
     # w_cdf = [1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0]
     # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
-    w_grad = [(-1.0/2.0) * (fx ** 2) + 2 * fx - 2, (3.0 / 2.0) * ((fx-1) ** 2) - (2 * (fx-1)), (-1.0/2.0) * ((fx-2) ** 2) + 2 * (fx-2) - 2]
+    w = cubic_bspline_kernal(fx)
+    w_grad = cubic_bspline_kernal_grad(fx)
     # print("vp: ", vp)
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
             dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
+            # print(w)
             weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
             weight = w[i][0] * w[j][1] # x, y directions, respectively
             # weight_cdf = w_cdf[i] * w_cdf[j]
@@ -445,21 +463,9 @@ def scatter_face_v(xp, vp, cp, PFT, kp):
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
     # print(xp)
-    # Note, in SSJCTS14, they use cubic B-spline
-    w = []
-    if fx > 1.0:
-        w.append( (-1.0 / 6.0) * (fx ** 3) + (fx ** 2) - 2 * fx + (4.0 / 3.0))
-    else:
-        w.append((1.0 / 2.0) * (fx ** 3) - (fx ** 2) + (2.0 / 3.0))
-    
-    w.append((1.0 / 2.0) * (ti.abs(fx-1) ** 3) - (ti.abs(fx-1) ** 2) + (2.0 / 3.0))
-    
-    if fx < -1.0:
-        w.append( (-1.0 / 6.0) * (ti.abs(fx-2) ** 3) + ((fx-2) ** 2) - 2 * ti.abs(fx-2) + (4.0 / 3.0))
-    else:
-        w.append((1.0 / 2.0) * (ti.abs(fx-2) ** 3) - ((fx-2) ** 2) + (2.0 / 3.0))
-    
-    w_grad = [(-1.0/2.0) * (fx ** 2) + 2 * fx - 2, (3.0 / 2.0) * ((fx-1) ** 2) - (2 * (fx-1)), (-1.0/2.0) * ((fx-2) ** 2) + 2 * (fx-2) - 2]
+    # Note, in SSJCTS14, they use cubic B-splinew = cubic_bspline_kernal(fx)
+    w = cubic_bspline_kernal(fx)
+    w_grad = cubic_bspline_kernal_grad(fx)
     # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
     # w_cdf = [1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0]
     # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
@@ -486,19 +492,7 @@ def scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda):
     fx = xp * inv_dx - base.cast(ti.f32)
     # Note, in SSJCTS14, they use cubic B-splines
     # w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2] # Quadratic Bspline
-    w = []
-    if fx > 1.0:
-        w.append( (-1.0 / 6.0) * (fx ** 3) + (fx ** 2) - 2 * fx + (4.0 / 3.0))
-    else:
-        w.append((1.0 / 2.0) * (fx ** 3) - (fx ** 2) + (2.0 / 3.0))
-    
-    w.append((1.0 / 2.0) * (ti.abs(fx-1) ** 3) - (ti.abs(fx-1) ** 2) + (2.0 / 3.0))
-    
-    if fx < -1.0:
-        w.append( (-1.0 / 6.0) * (ti.abs(fx-2) ** 3) + ((fx-2) ** 2) - 2 * ti.abs(fx-2) + (4.0 / 3.0))
-    else:
-        w.append((1.0 / 2.0) * (ti.abs(fx-2) ** 3) - ((fx-2) ** 2) + (2.0 / 3.0))
-    
+    w = cubic_bspline_kernal(fx)
     # inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
     # base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     # fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
@@ -545,7 +539,7 @@ def P2G():
             par_Je = par_Fe.determinant()
             par_Jp = particle_Fp[p].determinant()
             min_thres = 1e-5
-            if(par_Je < min_thres or par_Jp < min_thres):
+            if par_Je < min_thres or par_Jp < min_thres:
                 print("par_Je: ", par_Je)
                 print("Fe: ", particle_Fe[p])
                 print("par_Jp: ", par_Jp)
@@ -794,6 +788,14 @@ def solve_temperature(dt: ti.f32):
     T.copy_from(temperature_solver.p)
 
 @ti.func
+def tight_quadra_kernal(fx):
+    return [(1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0), -((fx-1)**2) + (3.0/4.0), (1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0)]
+
+@ti.func
+def tight_quadra_kernal_grad(fx):
+    return [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
+
+@ti.func
 def gather_vp_u(xp):
     stagger = vec2(0.0, 0.5)
     inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
@@ -802,10 +804,7 @@ def gather_vp_u(xp):
 
     # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
     # tight quadratic stencil
-    w = []
-    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
-    w.append(-((fx-1)**2) + (3.0/4.0))
-    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+    w = tight_quadra_kernal(fx)
 
     v_pic = 0.0
 
@@ -832,10 +831,8 @@ def gather_vp_v(xp):
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
     # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
-    w = []
-    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
-    w.append(-((fx-1)**2) + (3.0/4.0))
-    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+    # w = [(1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0), -((fx-1)**2) + (3.0/4.0), (1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0)]
+    w = tight_quadra_kernal(fx)
 
     v_pic = 0.0
 
@@ -863,12 +860,11 @@ def gather_cp_x(xp):
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
     # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
-    w = []
-    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
-    w.append(-((fx-1)**2) + (3.0/4.0))
-    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+    # w = [(1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0), -((fx-1)**2) + (3.0/4.0), (1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0)]
+    w = tight_quadra_kernal(fx)
 
-    w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
+    w_grad = tight_quadra_kernal_grad(fx)
+    # w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
     # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
 
     cp = vec2(0.0, 0.0)
@@ -893,12 +889,11 @@ def gather_cp_y(xp):
 
     # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
     # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
-    w = []
-    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
-    w.append(-((fx-1)**2) + (3.0/4.0))
-    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+    # w = [(1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0), -((fx-1)**2) + (3.0/4.0), (1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0)]
 
-    w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
+    # w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
+    w = tight_quadra_kernal(fx)
+    w_grad = tight_quadra_kernal_grad(fx)
 
     cp = vec2(0.0, 0.0)
 
@@ -919,10 +914,8 @@ def gather_Tp(xp):
     base = (xp * inv_dx - 0.5).cast(ti.i32)
     fx = xp * inv_dx - base.cast(ti.f32)
 
-    w = []
-    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
-    w.append(-((fx-1)**2) + (3.0/4.0))
-    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+    # w = [(1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0), -((fx-1)**2) + (3.0/4.0), (1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0)]
+    w = tight_quadra_kernal(fx)
 
     Tp = 0.0
 
@@ -946,12 +939,11 @@ def gather_vp_grad_u(xp):
 
     # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
     # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
-    w = []
-    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
-    w.append(-((fx-1)**2) + (3.0/4.0))
-    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+    # w = [(1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0), -((fx-1)**2) + (3.0/4.0), (1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0)]
+    w = tight_quadra_kernal(fx)
 
-    w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
+    w_grad = tight_quadra_kernal_grad(fx)
+    # w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
     vp_grad = ti.Matrix.zero(ti.f32, 2, 2)
 
     for i in ti.static(range(3)):
@@ -973,12 +965,11 @@ def gather_vp_grad_v(xp):
 
     # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
     # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
-    w = []
-    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
-    w.append(-((fx-1)**2) + (3.0/4.0))
-    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+    # w = [(1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0), -((fx-1)**2) + (3.0/4.0), (1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0)]
+    w = tight_quadra_kernal(fx)
 
-    w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
+    # w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
+    w_grad = tight_quadra_kernal_grad(fx)
     vp_grad = ti.Matrix.zero(ti.f32, 2, 2)
 
     for i in ti.static(range(3)):
