@@ -335,6 +335,7 @@ def init():
         for i, j in J:
             J[i, j] = 1
             Je[i, j] = 1
+            Jp[i, j] = 1
             c[i, j] = 0
             T[i, j] = 0
             inv_lambda[i, j] = 0
@@ -398,9 +399,25 @@ def scatter_face_u(xp, vp, cp, PFT, kp):
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
     # print(xp)
     # Note, in SSJCTS14, they use cubic B-spline
-    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
+    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
+
+    # cubic spline
+    w = []
+    if fx > 1.0:
+        w.append( (-1.0 / 6.0) * (fx ** 3) + (fx ** 2) - 2 * fx + (4.0 / 3.0))
+    else:
+        w.append((1.0 / 2.0) * (fx ** 3) - (fx ** 2) + (2.0 / 3.0))
+    
+    w.append((1.0 / 2.0) * (ti.abs(fx-1) ** 3) - (ti.abs(fx-1) ** 2) + (2.0 / 3.0))
+    
+    if fx < -1.0:
+        w.append( (-1.0 / 6.0) * (ti.abs(fx-2) ** 3) + ((fx-2) ** 2) - 2 * ti.abs(fx-2) + (4.0 / 3.0))
+    else:
+        w.append((1.0 / 2.0) * (ti.abs(fx-2) ** 3) - ((fx-2) ** 2) + (2.0 / 3.0))
+    
     # w_cdf = [1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0]
-    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    w_grad = [(-1.0/2.0) * (fx ** 2) + 2 * fx - 2, (3.0 / 2.0) * ((fx-1) ** 2) - (2 * (fx-1)), (-1.0/2.0) * ((fx-2) ** 2) + 2 * (fx-2) - 2]
     # print("vp: ", vp)
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
@@ -410,7 +427,7 @@ def scatter_face_u(xp, vp, cp, PFT, kp):
             weight = w[i][0] * w[j][1] # x, y directions, respectively
             # weight_cdf = w_cdf[i] * w_cdf[j]
 
-            su = base + offset
+            # su = base + offset
             u[base + offset] += weight * p_mass * (vp + ti.math.dot(cp, dpos))
             k_u[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
             u_face_mass[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
@@ -427,9 +444,23 @@ def scatter_face_v(xp, vp, cp, PFT, kp):
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
     # print(xp)
     # Note, in SSJCTS14, they use cubic B-spline
-    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
+    w = []
+    if fx > 1.0:
+        w.append( (-1.0 / 6.0) * (fx ** 3) + (fx ** 2) - 2 * fx + (4.0 / 3.0))
+    else:
+        w.append((1.0 / 2.0) * (fx ** 3) - (fx ** 2) + (2.0 / 3.0))
+    
+    w.append((1.0 / 2.0) * (ti.abs(fx-1) ** 3) - (ti.abs(fx-1) ** 2) + (2.0 / 3.0))
+    
+    if fx < -1.0:
+        w.append( (-1.0 / 6.0) * (ti.abs(fx-2) ** 3) + ((fx-2) ** 2) - 2 * ti.abs(fx-2) + (4.0 / 3.0))
+    else:
+        w.append((1.0 / 2.0) * (ti.abs(fx-2) ** 3) - ((fx-2) ** 2) + (2.0 / 3.0))
+    
+    w_grad = [(-1.0/2.0) * (fx ** 2) + 2 * fx - 2, (3.0 / 2.0) * ((fx-1) ** 2) - (2 * (fx-1)), (-1.0/2.0) * ((fx-2) ** 2) + 2 * (fx-2) - 2]
+    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
     # w_cdf = [1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0]
-    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
     # print("vp: ", vp)
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
@@ -452,7 +483,20 @@ def scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda):
     base = (xp * inv_dx - 0.5).cast(ti.i32)
     fx = xp * inv_dx - base.cast(ti.f32)
     # Note, in SSJCTS14, they use cubic B-splines
-    w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2] # Quadratic Bspline
+    # w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2] # Quadratic Bspline
+    w = []
+    if fx > 1.0:
+        w.append( (-1.0 / 6.0) * (fx ** 3) + (fx ** 2) - 2 * fx + (4.0 / 3.0))
+    else:
+        w.append((1.0 / 2.0) * (fx ** 3) - (fx ** 2) + (2.0 / 3.0))
+    
+    w.append((1.0 / 2.0) * (ti.abs(fx-1) ** 3) - (ti.abs(fx-1) ** 2) + (2.0 / 3.0))
+    
+    if fx < -1.0:
+        w.append( (-1.0 / 6.0) * (ti.abs(fx-2) ** 3) + ((fx-2) ** 2) - 2 * ti.abs(fx-2) + (4.0 / 3.0))
+    else:
+        w.append((1.0 / 2.0) * (ti.abs(fx-2) ** 3) - ((fx-2) ** 2) + (2.0 / 3.0))
+    
     # inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
     # base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     # fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
@@ -489,13 +533,14 @@ def set_Jp():
 
 @ti.kernel
 def P2G():
-    stagger_u = vec2(0.0, 0.5)
-    stagger_v = vec2(0.5, 0.0)
+    # stagger_u = vec2(0.0, 0.5)
+    # stagger_v = vec2(0.5, 0.0)
     for p in ti.grouped(particle_positions):
         if particle_type[p] == P_FLUID:
             xp = particle_positions[p]
-            par_F = particle_Fe[p] @ particle_Fp[p]
-            par_Je = particle_Fe[p].determinant()
+            # par_F = particle_Fe[p] @ particle_Fp[p]
+            par_Fe = particle_Fe[p]
+            par_Je = par_Fe.determinant()
             par_Jp = particle_Fp[p].determinant()
             min_thres = 1e-5
             if(par_Je < min_thres or par_Jp < min_thres):
@@ -504,10 +549,10 @@ def P2G():
                 print("par_Jp: ", par_Jp)
                 print("Fp: ", particle_Fp[p])
             par_J = par_Je * par_Jp
-            U, sig, V = ti.svd(par_F)
+            U, sig, V = ti.svd(par_Fe)
             # P(F) F^T
-            par_f = 2 * particle_mu[p] * (par_F - U@V.transpose()) @ par_F.transpose() + ti.Matrix.identity(ti.f32, 2) * particle_la[p] * par_J * (par_J-1)
-            par_f = p_vol * par_f # f is 2 by 2 matrix, whilch will be multiplid by weight gradient
+            par_f = 2 * particle_mu[p] * (par_Fe - U@V.transpose()) @ par_Fe.transpose() + ti.Matrix.identity(ti.f32, 2) * particle_la[p] * par_J * (par_J-1)
+            par_f = p_vol * par_f # f is 2 by 2 matrix, which will be multiplid by weight gradient
             # face
             scatter_face_u(xp, particle_velocities[p][0], cp_x[p], par_f, particle_k[p])
             scatter_face_v(xp, particle_velocities[p][1], cp_y[p], par_f, particle_k[p])
@@ -548,7 +593,7 @@ def clear_field():
 
 @ti.func
 def is_valid(i, j):
-    return i >= 0 and i < m and j >= 0 and j < n
+    return i > 0 and i < m and j > 0 and j < n
 
 
 @ti.func
