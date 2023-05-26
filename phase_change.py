@@ -50,8 +50,8 @@ mu_fluid_phase_init, lambda_fluid_phase_init = E_fluid_phase / (2 * (1 + nu_flui
 # Initial value
 T_air_init = 343 # 343K
 T_solid_phase_init = 373 # 373K
-# T_air_init = 273
-# T_solid_init = 273
+# T_air_init = 200
+# T_solid_phase_init = 200
 T_fluid_phase_init = 273 # freezing point
 
 # heat capacity (J/g*c)
@@ -135,8 +135,9 @@ particle_c = ti.field(dtype=ti.f32, shape=(m, n, npar, npar)) # heat capacity
 particle_k = ti.field(dtype=ti.f32, shape=(m, n, npar, npar)) # heat conductivity
 particle_l = ti.field(dtype=ti.f32, shape=(m, n, npar, npar)) # latent heat
 particle_Phase = ti.field(dtype=ti.i32, shape=(m, n, npar, npar))
-P_FLUID_PHASE = 2
-P_SOLID_PHASE = 3
+P_FLUID_PHASE = 3
+P_SOLID_PHASE = 4
+P_OTHER_PHASE = 5
 
 # -----------------params in render-----------
 screen_res = (800, 800 * n // m)
@@ -198,6 +199,7 @@ def render():
             y = int((j + 0.5) / screen_res[1] * h / grid_y)
 
             m = cell_type[x, y]
+            # m = T[x, y] / 373
 
             color_buffer[i, j] = map_color(m * 0.5)
 
@@ -210,22 +212,41 @@ def render():
         bg_color = 0x112f41
         particle_color = 0x068587
         particle_radius = 1.0
+        fluid_color = 0xC8D804
+        solid_color = 0xC3ABCD
 
         pf = particle_type.to_numpy()
         np_type = pf.copy()
         np_type = np.reshape(np_type, -1)
 
+        pp = particle_Phase.to_numpy()
+        np_phase = pp.copy()
+        np_phase = np.reshape(np_phase, -1)
+
         pos = particle_positions.to_numpy()
         np_pos = pos.copy()
+        np_pos_fluid = pos.copy()
+        np_pos_solid = pos.copy()
         np_pos = np.reshape(pos, (-1, 2))
+        np_pos_fluid = np.reshape(pos, (-1, 2))
+        np_pos_solid = np.reshape(pos, (-1, 2))
         np_pos = np_pos[np.where(np_type == P_FLUID)]
-
+        np_pos_fluid = np_pos_fluid[np.where(np_phase == P_FLUID_PHASE)]
+        np_pos_solid = np_pos_solid[np.where(np_phase == P_SOLID_PHASE)]
         for i in range(np_pos.shape[0]):
             np_pos[i][0] /= w
             np_pos[i][1] /= h
+        for i in range(np_pos_fluid.shape[0]):
+            np_pos_fluid[i][0] /= w
+            np_pos_fluid[i][1] /= h
+        for i in range(np_pos_solid.shape[0]):
+            np_pos_solid[i][0] /= w
+            np_pos_solid[i][1] /= h
 
         gui.clear(bg_color)
-        gui.circles(np_pos, radius=particle_radius, color=particle_color)
+        # gui.circles(np_pos, radius=particle_radius, color=particle_color)
+        gui.circles(np_pos_fluid, radius=particle_radius, color=fluid_color)
+        gui.circles(np_pos_solid, radius=particle_radius, color=solid_color)
     
     if render_type == 'particles':
         render_particles()
@@ -313,8 +334,10 @@ def init():
         for i, j, ix, jx in particle_positions:
             if cell_type[i, j] == utils.FLUID:
                 particle_type[i, j, ix, jx] = P_FLUID
+                particle_Phase[i, j, ix, jx] = P_SOLID_PHASE
             else:
                 particle_type[i, j, ix, jx] = P_OTHER
+                particle_type[i, j, ix, jx] = P_OTHER_PHASE
             px = i * grid_x + (ix + ti.random(ti.f32)) * pspace_x
             py = j * grid_y + (jx + ti.random(ti.f32)) * pspace_y
 
@@ -331,12 +354,12 @@ def init():
             particle_U[i, j, ix, jx] = 0  # [0, Lp], initialilly at 0
             particle_c[i, j, ix, jx] = c_solid_phase_init # for ice J/g * C
             particle_k[i, j, ix, jx] = k_solid_phase_init
-            particle_l[i, j, ix, jx] = p_mass * latent # for ice 334J/g to melt
-            particle_Phase[i, j, ix, jx] = P_SOLID_PHASE
+            particle_l[i, j, ix, jx] = p_mass * latent # for ice 334J/g to melt            
 
 
     # init_dambreak(4, 4)
-    init_spherefall(5,3,2)
+    # init_spherefall(5,3,2)
+    init_spherefall(5, 2, 2)
     init_field()
     init_particles()
 
@@ -373,7 +396,7 @@ def scatter_face_u(xp, vp, cp, PFT, kp):
             weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
             weight = w[i][0] * w[j][1] # x, y directions, respectively
 
-            # print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
+            su = base + offset
             u[base + offset] += weight * p_mass * (vp + ti.math.dot(cp, dpos))
             k_u[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
             u_face_mass[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
@@ -428,6 +451,17 @@ def scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda):
             c[base + offset] += weight * p_mass * par_c
             T[base + offset] += weight * p_mass * par_T
             inv_lambda[base + offset] += weight * p_mass * par_inv_lambda
+            # print("index:", i, j)
+            # print("weight: ", weight)
+            """
+            su = base + offset
+            if Je[su] < 1e-10:
+                print("index: ", su[0], su[1])
+                print("Je: ", Je[su])
+                print("pmass: ", p_mass)
+                print("weight: ", weight)
+            """
+
             
 
 @ti.func
@@ -447,7 +481,7 @@ def P2G():
             par_F = particle_Fe[p] @ particle_Fp[p]
             par_Je = particle_Fe[p].determinant()
             par_Jp = particle_Fp[p].determinant()
-            min_thres = 1e-10
+            min_thres = 1e-5
             if(par_Je < min_thres or par_Jp < min_thres):
                 print("par_Je: ", par_Je)
                 print("Fe: ", particle_Fe[p])
@@ -456,7 +490,7 @@ def P2G():
             par_J = par_Je * par_Jp
             U, sig, V = ti.svd(par_F)
             # P(F) F^T
-            par_f = 2 * particle_mu[p] * (par_F - U@V.transpose()) @ par_F.transpose() + ti.Matrix.identity(float, 2) * particle_la[p] * par_J * (par_J-1)
+            par_f = 2 * particle_mu[p] * (par_F - U@V.transpose()) @ par_F.transpose() + ti.Matrix.identity(ti.f32, 2) * particle_la[p] * par_J * (par_J-1)
             par_f = p_vol * par_f # f is 2 by 2 matrix, whilch will be multiplid by weight gradient
             # face
             scatter_face_u(xp, particle_velocities[p][0], cp_x[p], par_f, particle_k[p])
@@ -474,7 +508,6 @@ def P2G():
             par_inv_lambda = 1.0 / particle_la[p]
             scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda)
     set_Jp() # Jp = J / Je for all cell
-
 @ti.kernel
 def clear_field():
     u.fill(0.0)
@@ -530,7 +563,7 @@ def mark_cell():
             # print(u_face_mass[i+1, j])
             # print(v_face_mass[i, j])
             # print(v_face_mass[i, j+1])
-            if u_face_mass[i, j] > mass_thres and u_face_mass[i+1, j] > mass_thres and v_face_mass[i, j] > mass_thres and v_face_mass[i, j+1] > mass_thres:
+            if u_face_mass[i, j] > mass_thres and u_face_mass[i+1, j] > mass_thres and v_face_mass[i, j] > mass_thres and v_face_mass[i, j+1] > mass_thres and cell_mass[i, j] > mass_thres:
                 cell_type[i, j] = utils.FLUID
             else:
                 cell_type[i, j] = utils.AIR
@@ -539,10 +572,10 @@ def assign_temperature():
     for i, j in cell_type:
         if cell_type == utils.AIR:
             # air: 60 C
-            T[i, j] = 343 
+            T[i, j] = T_air_init
         elif cell_type == utils.SOLID:
             # solid(edge): 100 C
-            T[i, j] = 373
+            T[i, j] = T_solid_phase_init
         
 
 
@@ -606,25 +639,28 @@ def enforce_boundary():
     for i, j in u:
         if is_solid(i - 1, j) or is_solid(i, j):
             u[i, j] = 0.0
-        
+            # u[i, j] = -u[i, j]        
 
     # v solid
     for i, j in v:
         if is_solid(i, j - 1) or is_solid(i, j):
             v[i, j] = 0.0
+            # v[i, j] = -v[i, j]
 
-def solve_pressure(dt):
+
+def solve_pressure(dt: ti.f32):
     scale_A = dt / (p_rho * grid_x * grid_x)
     scale_b = 1 / grid_x
 
-    
-    pressure_solver.u = u
-    pressure_solver.v = v
-    pressure_solver.Jp = Jp
-    pressure_solver.Je = Je
-    pressure_solver.inv_lambda = inv_lambda
-    pressure_solver.cell_type = cell_type
-    
+    """
+    pressure_solver.u.copy_from(u)
+    pressure_solver.v.copy_from(v)
+    pressure_solver.Jp.copy_from(Jp)
+    pressure_solver.Je.copy_from(Je)
+    pressure_solver.inv_lambda.copy_from(inv_lambda)
+    pressure_solver.cell_type.copy_from(cell_type)
+    """
+
     pressure_solver.system_init(scale_A, scale_b)
     pressure_solver.solve(500)
 
@@ -640,24 +676,34 @@ def apply_pressure(dt: ti.f32):
                 u[i, j] = 0
             else:
                 u[i, j] += scale * (p[i, j] - p[i - 1, j])
+                if isnan(u[i, j]):
+                    print("apply pressure to let u be nan")
+                    print("u[i, j]: ", u[i, j])
+                    print("pressure: ", p[i, j], p[i-1, j])
+                    print("index: ", i, j)
 
         if is_fluid(i, j - 1) or is_fluid(i, j):
             if is_solid(i, j - 1) or is_solid(i, j):
                 v[i, j] = 0
             else:
                 v[i, j] += scale * (p[i, j] - p[i, j - 1])
+                if isnan(v[i, j]):
+                    print("apply pressure to let v be nan")
+                    print("v[i, j]: ", v[i, j])
+                    print("pressure: ", p[i, j], p[i-1, j])
+                    print("index: ", i, j)
 
-def solve_temperature(dt):
+def solve_temperature(dt: ti.f32):
     scale_A = dt / (p_rho * grid_x * grid_x)
     # scale_b = 1 / grid_x
     scale_b = 1
 
     
-    temperature_solver.k_u = k_u
-    temperature_solver.k_v = k_v
-    temperature_solver.old_T = T
-    temperature_solver.c = c
-    temperature_solver.cell_type = cell_type
+    temperature_solver.k_u.copy_from(k_u)
+    temperature_solver.k_v.copy_from(k_v)
+    temperature_solver.old_T.copy_from(T)
+    temperature_solver.c.copy_from(c)
+    temperature_solver.cell_type.copy_from(cell_type)
     
     temperature_solver.system_init(scale_A, scale_b)
     temperature_solver.solve(500)
@@ -681,7 +727,13 @@ def gather_vp_u(xp):
             weight = w[i][0] * w[j][1]
             v_pic += weight * u[base + offset]
             # print(weight * grid_v[base + offset])
-
+            if isnan(v_pic):
+                print("u_pic is nan")
+                print("u_pic: ", v_pic)
+                print("index: ", i, j)
+                print("weight: ", weight)
+                print("u: ", u[base + offset])
+                print("base: ", base)
     return v_pic
 
 @ti.func
@@ -700,6 +752,13 @@ def gather_vp_v(xp):
             offset = vec2(i, j)
             weight = w[i][0] * w[j][1]
             v_pic += weight * v[base + offset]
+            if isnan(v_pic):
+                print("v_pic is nan")
+                print("v_pic: ", v_pic)
+                print("index: ", i, j)
+                print("weight: ", weight)
+                print("v: ", v[base + offset])
+                print("base: ", base)
             # print(weight * grid_v[base + offset])
 
     return v_pic
@@ -780,7 +839,7 @@ def gather_vp_grad_u(xp):
 
     w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
     w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
-    vp_grad = ti.Matrix.zero(float, 2, 2)
+    vp_grad = ti.Matrix.zero(ti.f32, 2, 2)
 
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
@@ -801,7 +860,7 @@ def gather_vp_grad_v(xp):
 
     w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
     w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
-    vp_grad = ti.Matrix.zero(float, 2, 2)
+    vp_grad = ti.Matrix.zero(ti.f32, 2, 2)
 
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
@@ -822,6 +881,10 @@ def G2P():
             xp = particle_positions[p]
             u_pic = gather_vp_u(xp)
             v_pic = gather_vp_v(xp)
+            if isnan(u_pic) or isnan(v_pic):
+                print("u or v isnan")
+                print("u: ", u_pic)
+                print("v: ", v_pic)
             new_v_pic = vec2(u_pic, v_pic)
             particle_velocities[p] = new_v_pic
 
@@ -840,21 +903,26 @@ def update_deformation_gradient():
     for p in ti.grouped(particle_positions):
         if particle_type[p] == P_FLUID:
             xp = particle_positions[p]
-            vp_grad = ti.Matrix.zero(float, 2, 2)
+            vp_grad = ti.Matrix.zero(ti.f32, 2, 2)
             vp_grad += gather_vp_grad_u(xp)
             vp_grad += gather_vp_grad_v(xp)
             # update deformation gradient
             count = 1
-            while (ti.Matrix.identity(float, 2) + dt * vp_grad).determinant() <= 0:
+            while (ti.Matrix.identity(ti.f32, 2) + dt * vp_grad).determinant() <= 0:
                 count *= 2
                 vp_grad /= 2
-            update_term = ti.Matrix.identity(float, 2)
+            update_term = ti.Matrix.identity(ti.f32, 2)
             for i in range(count):
-                update_term = update_term @ (ti.Matrix.identity(float, 2) + dt * vp_grad)
+                update_term = update_term @ (ti.Matrix.identity(ti.f32, 2) + dt * vp_grad)
             new_particle_Fe = update_term @ particle_Fe[p]
             if particle_Phase[p] == P_FLUID_PHASE:
-                new_particle_Fe = ti.math.sqrt(new_particle_Fe.determinant()) * ti.Matrix.identity(float, 2)
+                new_particle_Fe = ti.math.sqrt(new_particle_Fe.determinant()) * ti.Matrix.identity(ti.f32, 2)
             particle_Fe[p] = new_particle_Fe
+
+
+@ti.func
+def isnan(x):
+    return not (x < 0 or 0 < x or x == 0)
 
 @ti.kernel
 def advect_particle(dt: ti.f32):
@@ -862,10 +930,11 @@ def advect_particle(dt: ti.f32):
         if particle_type[p] == P_FLUID:
             pos = particle_positions[p]
             pv = particle_velocities[p]
-            # print("old pos: ", pos)
-            # print("vel: ", pv)
             pos += pv * dt
-            # print("new pos: ", pos)
+            if isnan(pos[0]) or isnan(pos[1]):
+                print("old pos: ", particle_positions[p])
+                print("new pos", pos)
+                print("vel: ", pv)
             if pos[0] <= grid_x:  # left boundary
                 pos[0] = grid_x
                 pv[0] = 0
@@ -878,7 +947,10 @@ def advect_particle(dt: ti.f32):
             if pos[1] >= h - grid_y:  # top boundary
                 pos[1] = h - grid_y
                 pv[1] = 0
-
+            if isnan(pos[0]) or isnan(pos[1]):
+                print("old pos(after adjustment): ", particle_positions[p])
+                print("new pos(after adjustment): ", pos)
+                print("vel(after adjustment): ", pv)
             particle_positions[p] = pos
             particle_velocities[p] = pv
 
@@ -1001,11 +1073,11 @@ def simulation(max_time, max_step):
     step = 1
 
     while step < max_step and t < max_time:
-        # render()
+        render()
         print("step 1")
         for i in range(substeps):
             onestep(dt)
-            render()
+            # render()
             pv = particle_velocities.to_numpy()
             max_vel = np.max(np.linalg.norm(pv, 2, axis=1))
 

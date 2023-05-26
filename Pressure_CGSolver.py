@@ -38,11 +38,8 @@ class Pressure_CGSolver:
         # assume that scale_b = 1 / grid_x
         for i, j in ti.ndrange(self.m, self.n):
             if self.cell_type[i, j] == utils.FLUID:
-                if self.Je[i, j] < 1e-10:
-                    print("Je: ", self.Je[i, j])    
-                    assert self.Je[i, j] < 1e-10
-                self.b[i,
-                       j] = (-1) * (self.Je[i, j]-1) / (self.dt * self.Je[i, j]) + (-1) * scale_b * (self.u[i + 1, j] - self.u[i, j] +
+                    self.b[i,
+                           j] = (-1) * (self.Je[i, j]-1) / (self.dt * self.Je[i, j]) + (-1) * scale_b * (self.u[i + 1, j] - self.u[i, j] +
                                             self.v[i, j + 1] - self.v[i, j])
 
         #modify right hand side of linear system to account for solid velocities
@@ -79,7 +76,7 @@ class Pressure_CGSolver:
                     self.Ay[i, j] = -scale_A
                 elif self.cell_type[i, j + 1] == utils.AIR:
                     self.Adiag[i, j] += scale_A
-
+    
     def system_init(self, scale_A, scale_b):
         self.b.fill(0)
         self.Adiag.fill(0.0)
