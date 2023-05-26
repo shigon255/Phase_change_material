@@ -36,6 +36,8 @@ p_mass = p_vol * p_rho # mass: kg
 g = -9.8
 substeps = 4
 
+mass_min_thres = 1e-8
+
 # Young's modulas , Poisson's ratio and lame parameter
 # E_solid_phase, nu_solid_phase = 9, 0.3  # Young's modulus(Gpa) and Poisson's ratio for ice 
 E_solid_phase, nu_solid_phase = 9 * 1e-4, 0.3  # Young's modulus(Gpa) and Poisson's ratio for ice 
@@ -527,7 +529,7 @@ def scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda):
 @ti.func
 def set_Jp():
     for i, j in Jp:
-        if Je[i, j] > 0:
+        if Je[i, j] > mass_min_thres:
             Jp[i, j] = J[i, j] / Je[i, j]
 
 
@@ -621,12 +623,11 @@ def mark_cell():
         if not is_solid(i, j):
             # check if it's interior i.e. every face has mass
             # for cell(i, j), faces are u(i, j), u(i+1, j), v(i, j), v(i, j+1)
-            mass_thres = 1e-5
             # print(u_face_mass[i, j])
             # print(u_face_mass[i+1, j])
             # print(v_face_mass[i, j])
             # print(v_face_mass[i, j+1])
-            if u_face_mass[i, j] > mass_thres and u_face_mass[i+1, j] > mass_thres and v_face_mass[i, j] > mass_thres and v_face_mass[i, j+1] > mass_thres and cell_mass[i, j] > mass_thres:
+            if u_face_mass[i, j] > mass_min_thres and u_face_mass[i+1, j] > mass_min_thres and v_face_mass[i, j] > mass_min_thres and v_face_mass[i, j+1] > mass_min_thres: # and cell_mass[i, j] > mass_thres:
                 cell_type[i, j] = utils.FLUID
             else:
                 cell_type[i, j] = utils.AIR
@@ -645,41 +646,41 @@ def assign_temperature():
 @ti.kernel
 def face_normalize():
     for i, j in u:
-        if u_face_mass[i, j] > 0:
+        if u_face_mass[i, j] > mass_min_thres:
             u[i, j] = u[i, j] / u_face_mass[i, j]
 
     for i, j in v:
-        if v_face_mass[i, j] > 0:
+        if v_face_mass[i, j] > mass_min_thres:
             v[i, j] = v[i, j] / v_face_mass[i, j]
 
     for i, j in k_u:
-        if u_face_mass[i, j] > 0:
+        if u_face_mass[i, j] > mass_min_thres:
             k_u[i, j] = k_u[i, j] / u_face_mass[i, j]
 
     for i, j in k_v:
-        if v_face_mass[i, j] > 0:
+        if v_face_mass[i, j] > mass_min_thres:
             k_v[i, j] = k_v[i, j] / v_face_mass[i, j]
 
 @ti.kernel
 def cell_normalize():
     for i, j in J:
-        if cell_mass[i, j] > 0:
+        if cell_mass[i, j] > mass_min_thres:
             J[i, j] /= cell_mass[i, j]
 
     for i, j in Je:
-        if cell_mass[i, j] > 0:
+        if cell_mass[i, j] > mass_min_thres:
             Je[i, j] /= cell_mass[i, j]
 
     for i, j in c:
-        if cell_mass[i, j] > 0:
+        if cell_mass[i, j] > mass_min_thres:
             c[i, j] /= cell_mass[i, j]
 
     for i, j in T:
-        if cell_mass[i, j] > 0:
+        if cell_mass[i, j] > mass_min_thres:
             T[i, j] /= cell_mass[i, j]
 
     for i, j in inv_lambda:
-        if cell_mass[i, j] > 0:
+        if cell_mass[i, j] > mass_min_thres:
             inv_lambda[i, j] /= cell_mass[i, j]
     
 @ti.kernel
@@ -687,11 +688,11 @@ def apply_force(dt: ti.f32):
 
     # internal force (have been calculated in P2G)
     for i, j in u:
-        if u_face_mass[i, j] > 0:
+        if u_face_mass[i, j] > mass_min_thres:
             u[i, j] += (fu[i, j]/u_face_mass[i, j]) * dt
     
     for i, j in v:
-        if v_face_mass[i, j] > 0:
+        if v_face_mass[i, j] > mass_min_thres:
             v[i, j] += (fv[i, j]/v_face_mass[i, j]) * dt
 
     # gravity(only v(y) direction)
@@ -703,15 +704,31 @@ def enforce_boundary():
     # u solid
     for i, j in u:
         if is_solid(i - 1, j) or is_solid(i, j):
-            # u[i, j] = 0.0
-            u[i, j] = -u[i, j]        
+            u[i, j] = 0.0
+            # u[i, j] = -u[i, j]        
 
     # v solid
     for i, j in v:
         if is_solid(i, j - 1) or is_solid(i, j):
-            # v[i, j] = 0.0
-            v[i, j] = -v[i, j]
+            v[i, j] = 0.0
+            # v[i, j] = -v[i, j]
 
+@ti.kernel
+def collect_face_vol():
+    # cubic b spline cdf
+    w_4 = [0.041667, 0.45833, 0.45833, 0.041667]
+    w_5 = [0.0026042, 0.1979125, 0.59896, 0.1979125, 0.0026042] 
+    for i, j in vol_u:
+        for offsetX in ti.static(range(4)):
+            for offsetY in ti.static(range(5)):
+                if is_fluid(i-2+offsetX, j-2+offsetY):
+                    vol_u[i, j] += w_4[offsetX] * w_5[offsetY]
+
+    for i, j in vol_v:
+        for offsetX in ti.static(range(5)):
+            for offsetY in ti.static(range(4)):
+                if is_fluid(i-2+offsetX, j-2+offsetY):
+                    vol_v[i, j] += w_5[offsetX] * w_4[offsetY]
 
 def solve_pressure(dt: ti.f32):
     scale_A = dt / (grid_x * grid_x)
@@ -783,7 +800,12 @@ def gather_vp_u(xp):
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
-    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    # tight quadratic stencil
+    w = []
+    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
+    w.append(-((fx-1)**2) + (3.0/4.0))
+    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
 
     v_pic = 0.0
 
@@ -809,7 +831,11 @@ def gather_vp_v(xp):
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
-    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    w = []
+    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
+    w.append(-((fx-1)**2) + (3.0/4.0))
+    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
 
     v_pic = 0.0
 
@@ -836,8 +862,14 @@ def gather_cp_x(xp):
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
-    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
-    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    w = []
+    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
+    w.append(-((fx-1)**2) + (3.0/4.0))
+    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+
+    w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
+    # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
 
     cp = vec2(0.0, 0.0)
 
@@ -859,8 +891,14 @@ def gather_cp_y(xp):
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
-    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
-    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    w = []
+    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
+    w.append(-((fx-1)**2) + (3.0/4.0))
+    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+
+    w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
 
     cp = vec2(0.0, 0.0)
 
@@ -881,7 +919,10 @@ def gather_Tp(xp):
     base = (xp * inv_dx - 0.5).cast(ti.i32)
     fx = xp * inv_dx - base.cast(ti.f32)
 
-    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    w = []
+    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
+    w.append(-((fx-1)**2) + (3.0/4.0))
+    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
 
     Tp = 0.0
 
@@ -903,8 +944,14 @@ def gather_vp_grad_u(xp):
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
-    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
-    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    w = []
+    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
+    w.append(-((fx-1)**2) + (3.0/4.0))
+    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+
+    w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
     vp_grad = ti.Matrix.zero(ti.f32, 2, 2)
 
     for i in ti.static(range(3)):
@@ -924,8 +971,14 @@ def gather_vp_grad_v(xp):
     base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
 
-    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
-    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Bspline
+    # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    w = []
+    w.append((1.0 / 2.0) * (fx ** 2) - (3.0 / 2.0) * fx + (9.0 / 8.0))
+    w.append(-((fx-1)**2) + (3.0/4.0))
+    w.append((1.0 / 2.0) * ((fx-2) ** 2) - (3.0 / 2.0) * (fx-2) + (9.0 / 8.0))
+
+    w_grad = [fx-(3.0/2.0), -2*(fx-1), (fx-2)-(3.0/2.0)]
     vp_grad = ti.Matrix.zero(ti.f32, 2, 2)
 
     for i in ti.static(range(3)):
@@ -1046,7 +1099,7 @@ def update_heat_parameters():
                     # freezing
                     particle_U[p] += particle_c[p] * p_mass * (particle_T[p] - particle_last_T[p])
                     if  particle_U[p] < 0:
-                        particle_Phase[p] = P_FLUID_PHASE
+                        particle_Phase[p] = P_SOLID_PHASE
                         particle_mu[p] = mu_solid_phase_init
                         particle_la[p] = lambda_solid_phase_init
                         particle_c[p] = c_solid_phase_init
@@ -1099,6 +1152,9 @@ def onestep(dt):
     print("-----------end enforce boundary 1 ---------------")
 
     # 7. Chorin style projection
+    print("------------start collect vol-----------------")
+    collect_face_vol()
+    print("------------end collect vol-----------------")
     print("-----------start solve pressure---------------")
     solve_pressure(dt)
     print("-----------end solve pressure---------------")

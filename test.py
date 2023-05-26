@@ -14,7 +14,7 @@ def vec3(x, y, z):
 
 @ti.kernel
 def main():
-    xp = vec2(1.0, 1.0)
+    xp = vec2(0.7, 0.7)
     inv_dx = vec2(2.0, 2.0)
     stagger = vec2(0.0, 0.5)
 
