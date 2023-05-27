@@ -172,7 +172,7 @@ dt = 0.01
 if preconditioning == None:
     # solver = CGSolver(m, n, u, v, cell_type)
     pressure_solver = Pressure_CGSolver(m, n, u, v, dt, Jp, Je, inv_lambda, cell_type, vol_u, vol_v, u_face_mass, v_face_mass)
-    temperature_solver = Temperature_CGSolver(m, n, k_u, k_v, T, c, cell_type)
+    temperature_solver = Temperature_CGSolver(m, n, k_u, k_v, T, c, cell_type, cell_mass, grid_x)
 elif preconditioning == 'MIC':
     solver = MICPCGSolver(m, n, u, v, cell_type, MIC_blending=MIC_blending)
 elif preconditioning == 'MG':
@@ -589,7 +589,7 @@ def clear_field():
 
 @ti.func
 def is_valid(i, j):
-    return i > 0 and i < m and j > 0 and j < n
+    return i >= 0 and i < m and j >= 0 and j < n
 
 
 @ti.func
@@ -599,7 +599,8 @@ def is_fluid(i, j):
 
 @ti.func
 def is_solid(i, j):
-    return is_valid(i, j) and cell_type[i, j] == utils.SOLID
+    # return is_valid(i, j) and cell_type[i, j] == utils.SOLID
+    return i == 0 or i == m - 1 or j == 0 or j == n - 1
 
 
 @ti.func
@@ -752,7 +753,8 @@ def apply_pressure(dt: ti.f32):
             if is_solid(i - 1, j) or is_solid(i, j):
                 u[i, j] = 0
             else:
-                u[i, j] += scale * (p[i, j] - p[i - 1, j]) * (1 / (u_face_mass[i, j] * 2))
+                inv_rho = vol_u[i, j] / u_face_mass[i, j]
+                u[i, j] += scale * (p[i, j] - p[i - 1, j]) * inv_rho
                 if isnan(u[i, j]):
                     print("apply pressure to let u be nan")
                     print("u[i, j]: ", u[i, j])
@@ -763,7 +765,8 @@ def apply_pressure(dt: ti.f32):
             if is_solid(i, j - 1) or is_solid(i, j):
                 v[i, j] = 0
             else:
-                v[i, j] += scale * (p[i, j] - p[i, j - 1]) * (1 / (v_face_mass[i, j] * 2))
+                inv_rho = vol_v[i, j] / v_face_mass[i, j]
+                v[i, j] += scale * (p[i, j] - p[i, j - 1]) * inv_rho
                 if isnan(v[i, j]):
                     print("apply pressure to let v be nan")
                     print("v[i, j]: ", v[i, j])
@@ -771,7 +774,7 @@ def apply_pressure(dt: ti.f32):
                     print("index: ", i, j)
 
 def solve_temperature(dt: ti.f32):
-    scale_A = dt / (p_rho * grid_x * grid_x)
+    scale_A = dt / (grid_x * grid_x)
     # scale_b = 1 / grid_x
     scale_b = 1
 
@@ -1143,9 +1146,9 @@ def onestep(dt):
     print("-----------end enforce boundary 1 ---------------")
 
     # 7. Chorin style projection
-    print("------------start collect vol-----------------")
+    print("------------start collect face vol-----------------")
     collect_face_vol()
-    print("------------end collect vol-----------------")
+    print("------------end collect face vol-----------------")
     print("-----------start solve pressure---------------")
     solve_pressure(dt)
     print("-----------end solve pressure---------------")

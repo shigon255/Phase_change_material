@@ -4,7 +4,7 @@ import utils
 
 @ti.data_oriented
 class Temperature_CGSolver:
-    def __init__(self, m, n, k_u, k_v, old_T, c, cell_type):
+    def __init__(self, m, n, k_u, k_v, old_T, c, cell_type, cell_mass, grid_x):
         self.m = m
         self.n = n
         self.k_u = k_u
@@ -12,6 +12,8 @@ class Temperature_CGSolver:
         self.old_T = old_T 
         self.c = c
         self.cell_type = cell_type
+        self.cell_mass = cell_mass
+        self.grid_x = grid_x
 
         # rhs of linear system
         self.b = ti.field(dtype=ti.f32, shape=(self.m, self.n))
@@ -34,13 +36,14 @@ class Temperature_CGSolver:
     def system_init_kernel(self, scale_A: ti.f32, scale_b: ti.f32):
         #define right hand side of linear system
         for i, j in ti.ndrange(self.m, self.n):
-            if self.cell_type[i, j] == utils.FLUID:
-                self.b[i, j] = self.old_T[i, j]
-            elif self.cell_type[i, j] == utils.AIR:
+            self.b[i, j] = self.old_T[i, j]
+            # if self.cell_type[i, j] == utils.FLUID:
+              #   self.b[i, j] = self.old_T[i, j]
+           #  elif self.cell_type[i, j] == utils.AIR:
                 # hardcode 343K
-                self.b[i, j] = 343
-            else:
-                self.b[i, j] = 373
+             #    self.b[i, j] = 343
+            # else:
+              #   self.b[i, j] = 373
                 
         """
         #modify right hand side of linear system to account for solid velocities
@@ -58,26 +61,27 @@ class Temperature_CGSolver:
                     self.b[i, j] += scale_b * (self.v[i, j + 1] - 0)
         """
         # define left handside of linear system
-        # assume that scale_A = dt / (grid_x^2 * rho)
+        # assume that scale_A = dt / (grid_x^2)
         for i, j in ti.ndrange(self.m, self.n):
+            self.Adiag[i, j] += 1.0
             if self.cell_type[i, j] == utils.FLUID:
-                new_scale_A = scale_A / self.c[i, j]
-                self.Adiag[i, j] += 1.0
+                new_scale_A = scale_A * (self.grid_x**2) / (self.c[i, j] * self.cell_mass[i, j])
+                # self.Adiag[i, j] += 1.0
                 if self.cell_type[i - 1, j] == utils.FLUID:
-                    self.Adiag[i, j] += new_scale_A
+                    self.Adiag[i, j] += new_scale_A * self.k_u[i, j]
                 if self.cell_type[i + 1, j] == utils.FLUID:
-                    self.Adiag[i, j] += new_scale_A
-                    self.Ax[i, j] = -new_scale_A * self.k_u[i, j]
+                    self.Adiag[i, j] += new_scale_A * self.k_u[i+1, j]
+                    self.Ax[i, j] = -new_scale_A * self.k_u[i+1, j]
                 elif self.cell_type[i + 1, j] == utils.AIR:
-                    self.Adiag[i, j] += new_scale_A
+                    self.Adiag[i, j] += new_scale_A * self.k_u[i+1, j]
 
                 if self.cell_type[i, j - 1] == utils.FLUID:
-                    self.Adiag[i, j] += new_scale_A
+                    self.Adiag[i, j] += new_scale_A * self.k_v[i, j]
                 if self.cell_type[i, j + 1] == utils.FLUID:
-                    self.Adiag[i, j] += new_scale_A
-                    self.Ay[i, j] = -new_scale_A * self.k_v[i, j]
+                    self.Adiag[i, j] += new_scale_A * self.k_v[i, j+1]
+                    self.Ay[i, j] = -new_scale_A * self.k_v[i, j+1]
                 elif self.cell_type[i, j + 1] == utils.AIR:
-                    self.Adiag[i, j] += new_scale_A
+                    self.Adiag[i, j] += new_scale_A * self.k_v[i, j+1]
 
     def system_init(self, scale_A, scale_b):
         self.b.fill(0)

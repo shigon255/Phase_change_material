@@ -63,23 +63,30 @@ class Pressure_CGSolver:
         # define left handside of linear system
         # assume that scale_A = dt / (grid_x^2)
         for i, j in ti.ndrange(self.m, self.n):
-            self.Adiag[i, j] += (self.Jp[i, j] / (self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]
             if self.cell_type[i, j] == utils.FLUID:
+                self.Adiag[i, j] += (self.Jp[i, j] /(self.Je[i, j] * self.dt)) * self.inv_lambda[i, j]
                 if self.cell_type[i - 1, j] == utils.FLUID:
-                    self.Adiag[i, j] += scale_A * (1 / (self.u_face_mass[i, j] * 2))
+                    # mi / Vi
+                    inv_rho = self.vol_u[i, j] / self.u_face_mass[i, j]
+                    self.Adiag[i, j] += scale_A * inv_rho
                 if self.cell_type[i + 1, j] == utils.FLUID:
-                    self.Adiag[i, j] += scale_A * (1 / (self.u_face_mass[i+1, j] * 2))
-                    self.Ax[i, j] = -scale_A * (1 / (self.u_face_mass[i+1, j] * 2))
+                    inv_rho = self.vol_u[i+1, j] / self.u_face_mass[i+1, j]
+                    self.Adiag[i, j] += scale_A * inv_rho
+                    self.Ax[i, j] = -scale_A * inv_rho
                 elif self.cell_type[i + 1, j] == utils.AIR:
-                    self.Adiag[i, j] += scale_A
+                    inv_rho = self.vol_u[i+1, j] / self.u_face_mass[i+1, j]
+                    self.Adiag[i, j] += scale_A * inv_rho
 
                 if self.cell_type[i, j - 1] == utils.FLUID:
-                    self.Adiag[i, j] += scale_A * (1 / (self.v_face_mass[i, j] * 2))
+                    inv_rho = self.vol_v[i, j] / self.v_face_mass[i, j]
+                    self.Adiag[i, j] += scale_A * inv_rho
                 if self.cell_type[i, j + 1] == utils.FLUID:
-                    self.Adiag[i, j] += scale_A * (1 / (self.v_face_mass[i, j+1] * 2))
-                    self.Ay[i, j] = -scale_A * (1 / (self.v_face_mass[i, j+1] * 2))
+                    inv_rho = self.vol_v[i, j+1] / self.v_face_mass[i, j+1]
+                    self.Adiag[i, j] += scale_A * inv_rho
+                    self.Ay[i, j] = -scale_A * inv_rho
                 elif self.cell_type[i, j + 1] == utils.AIR:
-                    self.Adiag[i, j] += scale_A
+                    inv_rho = self.vol_v[i, j+1] / self.v_face_mass[i, j+1]
+                    self.Adiag[i, j] += scale_A * inv_rho
     
     def system_init(self, scale_A, scale_b):
         self.b.fill(0)
