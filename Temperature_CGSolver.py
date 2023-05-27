@@ -35,8 +35,16 @@ class Temperature_CGSolver:
     @ti.kernel
     def system_init_kernel(self, scale_A: ti.f32, scale_b: ti.f32):
         #define right hand side of linear system
+        avg = 0
+        count = 0
         for i, j in ti.ndrange(self.m, self.n):
             self.b[i, j] = self.old_T[i, j]
+            avg += self.b[i, j]
+            count += 1
+            # if self.b[i, j] > 1e15:
+                # print("Over")
+                # print("b: ", self.b[i, j])
+
             # if self.cell_type[i, j] == utils.FLUID:
               #   self.b[i, j] = self.old_T[i, j]
            #  elif self.cell_type[i, j] == utils.AIR:
@@ -44,7 +52,7 @@ class Temperature_CGSolver:
              #    self.b[i, j] = 343
             # else:
               #   self.b[i, j] = 373
-                
+        print("Avg temperature: ", avg/count)        
         """
         #modify right hand side of linear system to account for solid velocities
         #currently hard code solid velocities to zero
@@ -65,24 +73,23 @@ class Temperature_CGSolver:
         for i, j in ti.ndrange(self.m, self.n):
             self.Adiag[i, j] += 1.0
             if self.cell_type[i, j] == utils.FLUID:
-                new_scale_A = scale_A * (self.grid_x**2) / (self.c[i, j] * self.cell_mass[i, j])
+                new_scale_A = scale_A * (self.grid_x * self.grid_x) / (self.c[i, j] * self.cell_mass[i, j])
                 # self.Adiag[i, j] += 1.0
                 if self.cell_type[i - 1, j] == utils.FLUID:
-                    self.Adiag[i, j] += new_scale_A * self.k_u[i, j]
+                    self.Adiag[i, j] -= new_scale_A * self.k_u[i, j]
                 if self.cell_type[i + 1, j] == utils.FLUID:
-                    self.Adiag[i, j] += new_scale_A * self.k_u[i+1, j]
-                    self.Ax[i, j] = -new_scale_A * self.k_u[i+1, j]
+                    self.Adiag[i, j] -= new_scale_A * self.k_u[i+1, j]
+                    self.Ax[i, j] = new_scale_A * self.k_u[i+1, j]
                 elif self.cell_type[i + 1, j] == utils.AIR:
-                    self.Adiag[i, j] += new_scale_A * self.k_u[i+1, j]
+                    self.Adiag[i, j] -= new_scale_A * self.k_u[i+1, j]
 
                 if self.cell_type[i, j - 1] == utils.FLUID:
-                    self.Adiag[i, j] += new_scale_A * self.k_v[i, j]
+                    self.Adiag[i, j] -= new_scale_A * self.k_v[i, j]
                 if self.cell_type[i, j + 1] == utils.FLUID:
-                    self.Adiag[i, j] += new_scale_A * self.k_v[i, j+1]
-                    self.Ay[i, j] = -new_scale_A * self.k_v[i, j+1]
+                    self.Adiag[i, j] -= new_scale_A * self.k_v[i, j+1]
+                    self.Ay[i, j] = new_scale_A * self.k_v[i, j+1]
                 elif self.cell_type[i, j + 1] == utils.AIR:
-                    self.Adiag[i, j] += new_scale_A * self.k_v[i, j+1]
-
+                    self.Adiag[i, j] -= new_scale_A * self.k_v[i, j+1]
     def system_init(self, scale_A, scale_b):
         self.b.fill(0)
         self.Adiag.fill(0.0)

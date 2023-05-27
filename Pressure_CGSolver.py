@@ -36,6 +36,7 @@ class Pressure_CGSolver:
         self.alpha = ti.field(dtype=ti.f32, shape=())
         self.beta = ti.field(dtype=ti.f32, shape=())
 
+
     @ti.kernel
     def system_init_kernel(self, scale_A: ti.f32, scale_b: ti.f32):
         #define right hand side of linear system
@@ -45,6 +46,11 @@ class Pressure_CGSolver:
                     self.b[i,
                            j] = (-1) * (self.Je[i, j]-1) / (self.dt * self.Je[i, j]) + (-1) * scale_b * (self.u[i + 1, j] - self.u[i, j] +
                                             self.v[i, j + 1] - self.v[i, j])
+                    
+                    if not (self.b[i, j] < 0 or 0 < self.b[i, j] or self.b[i, j] == 0):
+                        print("Over")
+                        print("index: ", i, j)
+                        print("Je: ", self.Je[i, j])
 
         #modify right hand side of linear system to account for solid velocities
         #currently hard code solid velocities to zero
@@ -59,6 +65,7 @@ class Pressure_CGSolver:
                     self.b[i, j] -= scale_b * (self.v[i, j] - 0)
                 if self.cell_type[i, j + 1] == utils.SOLID:
                     self.b[i, j] += scale_b * (self.v[i, j + 1] - 0)
+        
 
         # define left handside of linear system
         # assume that scale_A = dt / (grid_x^2)

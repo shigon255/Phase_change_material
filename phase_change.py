@@ -31,12 +31,12 @@ inv_grid_y = 1.0 / grid_y
 pspace_x = grid_x / npar
 pspace_y = grid_y / npar
 
-p_vol, p_rho = (grid_x * 0.5)**2, 100 # vol: m^2, rho: kg/m^2
+p_vol, p_rho = (grid_x * 0.5)**2, 1 # vol: m^2, rho: kg/m^2
 p_mass = p_vol * p_rho # mass: kg
 g = -9.8
 substeps = 4
 
-mass_min_thres = 1e-8
+# mass_min_thres = 1e-4
 
 # Young's modulas , Poisson's ratio and lame parameter
 # E_solid_phase, nu_solid_phase = 9, 0.3  # Young's modulus(Gpa) and Poisson's ratio for ice 
@@ -50,11 +50,9 @@ mu_fluid_phase_init, lambda_fluid_phase_init = E_fluid_phase / (2 * (1 + nu_flui
     (1 + nu_fluid_phase) * (1 - 2 * nu_fluid_phase))  # Lame parameters
 
 # Initial value
-T_air_init = 343 # 343K
-T_solid_phase_init = 373 # 373K
-# T_air_init = 200
-# T_solid_phase_init = 200
-T_fluid_phase_init = 273 # freezing point
+T_air_init = 60 # 60 C
+T_solid_phase_init = 100 # 100 C
+T_fluid_phase_init = 0
 
 # heat capacity (J/kg*c)
 c_solid_phase_init = 2093
@@ -66,7 +64,7 @@ k_fluid_phase_init = 0.606
 k_air_init = 0.04
 
 # phase change parameters
-freezing_point = 273 # 273K
+freezing_point = 0 # 273K
 latent = 382000 # latent of ice，J/kg
 
 # ----------------fields---------------
@@ -304,10 +302,10 @@ def init():
             v[i, j] = 0.0
 
         for i, j in u_face_mass:
-            u_face_mass[i, j] = 0.0
+            u_face_mass[i, j] = -1.0
         
         for i, j in v_face_mass:
-            v_face_mass[i, j] = 0.0
+            v_face_mass[i, j] = -1.0
 
         for i, j in fu:
             fu[i, j] = 0.0
@@ -328,7 +326,7 @@ def init():
             vol_v[i, j] = 0.0
 
         for i, j in cell_mass:
-            cell_mass[i, j] = 0.0
+            cell_mass[i, j] = -1.0
 
         for i, j in p:
             p[i, j] = 0.0
@@ -362,8 +360,8 @@ def init():
             particle_Fp[i, j, ix, jx] = ti.Matrix.identity(dt = ti.f32, n=2)
             particle_mu[i, j, ix, jx] = mu_solid_phase_init
             particle_la[i, j, ix, jx] = lambda_solid_phase_init
-            particle_T[i, j, ix, jx] = T_solid_phase_init
-            particle_last_T[i, j, ix, jx] = T_solid_phase_init
+            particle_T[i, j, ix, jx] = T_fluid_phase_init
+            particle_last_T[i, j, ix, jx] = T_fluid_phase_init
             particle_U[i, j, ix, jx] = 0  # [0, Lp], initialilly at 0
             particle_c[i, j, ix, jx] = c_solid_phase_init # for ice J/kg * C
             particle_k[i, j, ix, jx] = k_solid_phase_init
@@ -377,6 +375,10 @@ def init():
     init_particles()
 
 # -------------subprocesses----------------
+
+            
+            
+
 @ti.kernel
 def deformation_gradient_add_plasticity():
     for p in ti.grouped(particle_positions):
@@ -405,11 +407,11 @@ def cubic_bspline_kernal(fx):
     
     w[1] = ((1.0 / 2.0) * (ti.abs(fx-1) ** 3) - (ti.abs(fx-1) ** 2) + (2.0 / 3.0))
     
-    if fx[0] < -1.0:
+    if fx[0]-2 < -1.0:
         w[2][0] *= ( (-1.0 / 6.0) * (ti.abs(fx[0]-2) ** 3) + ((fx[0]-2) ** 2) - 2 * ti.abs(fx[0]-2) + (4.0 / 3.0))
     else:
         w[2][0] *= ((1.0 / 2.0) * (ti.abs(fx[0]-2) ** 3) - ((fx[0]-2) ** 2) + (2.0 / 3.0))
-    if fx[1] < -1.0:
+    if fx[1]-2 < -1.0:
         w[2][1] *= ( (-1.0 / 6.0) * (ti.abs(fx[1]-2) ** 3) + ((fx[1]-2) ** 2) - 2 * ti.abs(fx[1]-2) + (4.0 / 3.0))
     else:
         w[2][1] *= ((1.0 / 2.0) * (ti.abs(fx[1]-2) ** 3) - ((fx[1]-2) ** 2) + (2.0 / 3.0))
@@ -429,30 +431,34 @@ def scatter_face_u(xp, vp, cp, PFT, kp):
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
     # print(xp)
     # Note, in SSJCTS14, they use cubic B-spline
-    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
+    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
 
     # cubic spline
 
     # w_cdf = [1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0]
-    # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
-    w = cubic_bspline_kernal(fx)
-    w_grad = cubic_bspline_kernal_grad(fx)
+    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    # w = cubic_bspline_kernal(fx)
+    # w_grad = cubic_bspline_kernal_grad(fx)
     # print("vp: ", vp)
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
-            dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
-            # print(w)
-            weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
-            weight = w[i][0] * w[j][1] # x, y directions, respectively
-            # weight_cdf = w_cdf[i] * w_cdf[j]
+            if vec2_is_valid(base + offset):
+                dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
+                # print(w)
+                weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
+                weight = w[i][0] * w[j][1] # x, y directions, respectively
+                # weight_cdf = w_cdf[i] * w_cdf[j]
 
-            # su = base + offset
-            u[base + offset] += weight * p_mass * (vp + ti.math.dot(cp, dpos))
-            k_u[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
-            u_face_mass[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
-            fu[base + offset] += ti.math.dot(e, (-PFT) @ weight_grad )
-            # vol_u[base + offset] += weight_cdf
+                # su = base + offset
+                u[base + offset] += weight * p_mass * vp#(vp + ti.math.dot(cp, dpos))
+                k_u[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
+                if u_face_mass[base + offset] < 0:
+                    u_face_mass[base + offset] = weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
+                else:
+                    u_face_mass[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
+                fu[base + offset] += ti.math.dot(e, (-PFT) @ weight_grad )
+                # vol_u[base + offset] += weight_cdf
 
 @ti.func
 def scatter_face_v(xp, vp, cp, PFT, kp):
@@ -464,26 +470,30 @@ def scatter_face_v(xp, vp, cp, PFT, kp):
     fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
     # print(xp)
     # Note, in SSJCTS14, they use cubic B-splinew = cubic_bspline_kernal(fx)
-    w = cubic_bspline_kernal(fx)
-    w_grad = cubic_bspline_kernal_grad(fx)
-    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
+    # w = cubic_bspline_kernal(fx)
+    # w_grad = cubic_bspline_kernal_grad(fx)
+    w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
     # w_cdf = [1.0 / 6.0, 2.0 / 3.0, 1.0 / 6.0]
-    # w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
+    w_grad = [fx-1.5, -2*(fx-1), fx-3.5] # Bspline gradient
     # print("vp: ", vp)
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
-            dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
-            weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
-            weight = w[i][0] * w[j][1] # x, y directions, respectively
-            # weight_cdf = w_cdf[i] * w_cdf[j]
+            if vec2_is_valid(base + offset):
+                dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
+                weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
+                weight = w[i][0] * w[j][1] # x, y directions, respectively
+                # weight_cdf = w_cdf[i] * w_cdf[j]
 
-            # print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
-            v[base + offset] += weight * p_mass * (vp + ti.math.dot(cp, dpos))
-            k_v[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
-            v_face_mass[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
-            fv[base + offset] += ti.math.dot(e, (-PFT) @ weight_grad )
-            # vol_v[base + offset] += weight_cdf
+                # print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
+                v[base + offset] += weight * p_mass * vp#s(vp + ti.math.dot(cp, dpos))
+                k_v[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
+                if v_face_mass[base + offset] < 0.0:
+                    v_face_mass[base + offset] = weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
+                else:
+                    v_face_mass[base + offset] += weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
+                fv[base + offset] += ti.math.dot(e, (-PFT) @ weight_grad )
+                # vol_v[base + offset] += weight_cdf
 
 @ti.func
 def scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda):
@@ -491,39 +501,42 @@ def scatter_cell(xp, par_J, par_Je, par_c, par_T, par_inv_lambda):
     base = (xp * inv_dx - 0.5).cast(ti.i32)
     fx = xp * inv_dx - base.cast(ti.f32)
     # Note, in SSJCTS14, they use cubic B-splines
-    # w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2] # Quadratic Bspline
-    w = cubic_bspline_kernal(fx)
+    w = [0.5 * (1.5 - fx)**2, 0.75 - (fx - 1)**2, 0.5 * (fx - 0.5)**2] # Quadratic Bspline
+    # w = cubic_bspline_kernal(fx)
     # inv_dx = vec2(1.0 / grid_x, 1.0 / grid_y).cast(ti.f32)
     # base = (xp * inv_dx - (stagger + 0.5)).cast(ti.i32)
     # fx = xp * inv_dx - (base.cast(ti.f32) + stagger)
-    # w = [0.5*(1.5-fx)**2, 0.75-(fx-1)**2, 0.5*(fx-0.5)**2] # Quadratic Bspline
 
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
-            # dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
-            weight = w[i][0] * w[j][1] # x, y directions, respectively
-            cell_mass[base + offset] += weight * p_mass
-            Je[base + offset] += weight * p_mass * par_Je
-            J[base + offset] += weight * p_mass * par_J
-            c[base + offset] += weight * p_mass * par_c
-            T[base + offset] += weight * p_mass * par_T
-            inv_lambda[base + offset] += weight * p_mass * par_inv_lambda
-            # print("index:", i, j)
-            # print("weight: ", weight)
-            """
-            su = base + offset
-            if Je[su] < 1e-10:
-                print("index: ", su[0], su[1])
-                print("Je: ", Je[su])
-                print("pmass: ", p_mass)
-                print("weight: ", weight)
-            """
+            if vec2_is_valid(base + offset):
+                # dpos = (offset.cast(ti.f32) - fx) * vec2(grid_x, grid_y)
+                weight = w[i][0] * w[j][1] # x, y directions, respectively
+                if cell_mass[i, j] < 0.0:
+                    cell_mass[base + offset] = weight * p_mass
+                else:
+                    cell_mass[base + offset] += weight * p_mass
+                Je[base + offset] += weight * p_mass * par_Je
+                J[base + offset] += weight * p_mass * par_J
+                c[base + offset] += weight * p_mass * par_c
+                T[base + offset] += weight * p_mass * par_T
+                inv_lambda[base + offset] += weight * p_mass * par_inv_lambda
+                # print("index:", i, j)
+                # print("weight: ", weight)
+                """
+                su = base + offset
+                if Je[su] < 1e-10:
+                    print("index: ", su[0], su[1])
+                    print("Je: ", Je[su])
+                    print("pmass: ", p_mass)
+                    print("weight: ", weight)
+                """
 
 @ti.func
 def set_Jp():
     for i, j in Jp:
-        if Je[i, j] > mass_min_thres:
+        if Je[i, j] > 0.0:
             Jp[i, j] = J[i, j] / Je[i, j]
 
 
@@ -538,12 +551,13 @@ def P2G():
             par_Fe = particle_Fe[p]
             par_Je = par_Fe.determinant()
             par_Jp = particle_Fp[p].determinant()
-            min_thres = 1e-5
-            if par_Je < min_thres or par_Jp < min_thres:
+            """
+            if par_Je < 0.0 or par_Jp < 0.0:
                 print("par_Je: ", par_Je)
                 print("Fe: ", particle_Fe[p])
                 print("par_Jp: ", par_Jp)
                 print("Fp: ", particle_Fp[p])
+            """
             par_J = par_Je * par_Jp
             U, sig, V = ti.svd(par_Fe)
             # P(F) F^T
@@ -569,15 +583,15 @@ def P2G():
 def clear_field():
     u.fill(0.0)
     v.fill(0.0)
-    u_face_mass.fill(0.0)
-    v_face_mass.fill(0.0)
+    u_face_mass.fill(-1.0)
+    v_face_mass.fill(-1.0)
     fu.fill(0.0)
     fv.fill(0.0)
     k_u.fill(0.0)
     k_v.fill(0.0)
     vol_u.fill(0.0)
     vol_v.fill(0.0)
-    cell_mass.fill(0.0)
+    cell_mass.fill(-1.0)
     p.fill(0.0)
     J.fill(0.0)
     Je.fill(0.0)
@@ -591,6 +605,9 @@ def clear_field():
 def is_valid(i, j):
     return i >= 0 and i < m and j >= 0 and j < n
 
+@ti.func
+def vec2_is_valid(v):
+    return is_valid(v[0], v[1])
 
 @ti.func
 def is_fluid(i, j):
@@ -622,7 +639,7 @@ def mark_cell():
             # print(u_face_mass[i+1, j])
             # print(v_face_mass[i, j])
             # print(v_face_mass[i, j+1])
-            if u_face_mass[i, j] > mass_min_thres and u_face_mass[i+1, j] > mass_min_thres and v_face_mass[i, j] > mass_min_thres and v_face_mass[i, j+1] > mass_min_thres: # and cell_mass[i, j] > mass_thres:
+            if u_face_mass[i, j] > 0.0 and u_face_mass[i+1, j] > 0.0 and v_face_mass[i, j] > 0.0 and v_face_mass[i, j+1] > 0.0 and cell_mass[i, j] > 0.0:
                 cell_type[i, j] = utils.FLUID
             else:
                 cell_type[i, j] = utils.AIR
@@ -641,41 +658,51 @@ def assign_temperature():
 @ti.kernel
 def face_normalize():
     for i, j in u:
-        if u_face_mass[i, j] > mass_min_thres:
+        if u_face_mass[i, j] > 0.0:
             u[i, j] = u[i, j] / u_face_mass[i, j]
 
     for i, j in v:
-        if v_face_mass[i, j] > mass_min_thres:
+        # pr = False
+        # if v[i, j] > 1e-2:
+            # print("Before v: ", v[i, j], " index: ", i, j)
+            # print("face_mass: ", v_face_mass[i, j])
+         #    pr = True
+        if v_face_mass[i, j] > 0.0:
             v[i, j] = v[i, j] / v_face_mass[i, j]
+        # if pr:        
+            # print("After v: ", v[i, j], " index: ", i, j)
 
     for i, j in k_u:
-        if u_face_mass[i, j] > mass_min_thres:
+        if u_face_mass[i, j] > 0.0:
             k_u[i, j] = k_u[i, j] / u_face_mass[i, j]
 
     for i, j in k_v:
-        if v_face_mass[i, j] > mass_min_thres:
+        if v_face_mass[i, j] > 0.0:
             k_v[i, j] = k_v[i, j] / v_face_mass[i, j]
 
 @ti.kernel
 def cell_normalize():
     for i, j in J:
-        if cell_mass[i, j] > mass_min_thres:
+        if cell_mass[i, j] > 0.0:
             J[i, j] /= cell_mass[i, j]
 
     for i, j in Je:
-        if cell_mass[i, j] > mass_min_thres:
+        if cell_mass[i, j] > 0.0:
             Je[i, j] /= cell_mass[i, j]
 
     for i, j in c:
-        if cell_mass[i, j] > mass_min_thres:
+        if cell_mass[i, j] > 0.0:
             c[i, j] /= cell_mass[i, j]
 
     for i, j in T:
-        if cell_mass[i, j] > mass_min_thres:
+        # print("Before temp: ", T[i, j], ", index: ", i, j)
+        # print("cell mass: ", cell_mass[i, j])
+        if cell_mass[i, j] > 0.0:
             T[i, j] /= cell_mass[i, j]
+        # print("After temp: ", T[i, j], ", index: ", i, j)
 
     for i, j in inv_lambda:
-        if cell_mass[i, j] > mass_min_thres:
+        if cell_mass[i, j] > 0.0:
             inv_lambda[i, j] /= cell_mass[i, j]
     
 @ti.kernel
@@ -683,11 +710,11 @@ def apply_force(dt: ti.f32):
 
     # internal force (have been calculated in P2G)
     for i, j in u:
-        if u_face_mass[i, j] > mass_min_thres:
+        if u_face_mass[i, j] > 0.0:
             u[i, j] += (fu[i, j]/u_face_mass[i, j]) * dt
     
     for i, j in v:
-        if v_face_mass[i, j] > mass_min_thres:
+        if v_face_mass[i, j] > 0.0:
             v[i, j] += (fv[i, j]/v_face_mass[i, j]) * dt
 
     # gravity(only v(y) direction)
@@ -755,11 +782,13 @@ def apply_pressure(dt: ti.f32):
             else:
                 inv_rho = vol_u[i, j] / u_face_mass[i, j]
                 u[i, j] += scale * (p[i, j] - p[i - 1, j]) * inv_rho
+                """
                 if isnan(u[i, j]):
                     print("apply pressure to let u be nan")
                     print("u[i, j]: ", u[i, j])
                     print("pressure: ", p[i, j], p[i-1, j])
                     print("index: ", i, j)
+                """
 
         if is_fluid(i, j - 1) or is_fluid(i, j):
             if is_solid(i, j - 1) or is_solid(i, j):
@@ -767,11 +796,13 @@ def apply_pressure(dt: ti.f32):
             else:
                 inv_rho = vol_v[i, j] / v_face_mass[i, j]
                 v[i, j] += scale * (p[i, j] - p[i, j - 1]) * inv_rho
+                """
                 if isnan(v[i, j]):
                     print("apply pressure to let v be nan")
                     print("v[i, j]: ", v[i, j])
                     print("pressure: ", p[i, j], p[i-1, j])
                     print("index: ", i, j)
+                """
 
 def solve_temperature(dt: ti.f32):
     scale_A = dt / (grid_x * grid_x)
@@ -814,16 +845,19 @@ def gather_vp_u(xp):
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
-            weight = w[i][0] * w[j][1]
-            v_pic += weight * u[base + offset]
-            # print(weight * grid_v[base + offset])
-            if isnan(v_pic):
-                print("u_pic is nan")
-                print("u_pic: ", v_pic)
-                print("index: ", i, j)
-                print("weight: ", weight)
-                print("u: ", u[base + offset])
-                print("base: ", base)
+            if vec2_is_valid(base + offset):
+                weight = w[i][0] * w[j][1]
+                v_pic += weight * u[base + offset]
+                # print(weight * grid_v[base + offset])
+                """
+                if isnan(v_pic):
+                    print("u_pic is nan")
+                    print("u_pic: ", v_pic)
+                    print("index: ", i, j)
+                    print("weight: ", weight)
+                    print("u: ", u[base + offset])
+                    print("base: ", base)
+                """
     return v_pic
 
 @ti.func
@@ -842,16 +876,19 @@ def gather_vp_v(xp):
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
-            weight = w[i][0] * w[j][1]
-            v_pic += weight * v[base + offset]
-            if isnan(v_pic):
-                print("v_pic is nan")
-                print("v_pic: ", v_pic)
-                print("index: ", i, j)
-                print("weight: ", weight)
-                print("v: ", v[base + offset])
-                print("base: ", base)
-            # print(weight * grid_v[base + offset])
+            if vec2_is_valid(base + offset):
+                weight = w[i][0] * w[j][1]
+                v_pic += weight * v[base + offset]
+                """
+                if isnan(v_pic):
+                    print("v_pic is nan")
+                    print("v_pic: ", v_pic)
+                    print("index: ", i, j)
+                    print("weight: ", weight)
+                    print("v: ", v[base + offset])
+                    print("base: ", base)
+                # print(weight * grid_v[base + offset])
+                """
 
     return v_pic
 
@@ -875,11 +912,12 @@ def gather_cp_x(xp):
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
-            # dpos = offset.cast(ti.f32) - fx
-            # weight = w[i][0] * w[j][1]
-            # cp += 4 * weight * dpos * grid_v[base + offset] * inv_dx[0]
-            weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
-            cp += weight_grad * u[base + offset]
+            if vec2_is_valid(base + offset):
+                # dpos = offset.cast(ti.f32) - fx
+                # weight = w[i][0] * w[j][1]
+                # cp += 4 * weight * dpos * grid_v[base + offset] * inv_dx[0]
+                weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
+                cp += weight_grad * u[base + offset]    
 
     return cp
 
@@ -903,11 +941,12 @@ def gather_cp_y(xp):
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
-            # dpos = offset.cast(ti.f32) - fx
-            # weight = w[i][0] * w[j][1]
-            # cp += 4 * weight * dpos * grid_v[base + offset] * inv_dx[0]
-            weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
-            cp += weight_grad * v[base + offset]
+            if vec2_is_valid(base + offset):
+                # dpos = offset.cast(ti.f32) - fx
+                # weight = w[i][0] * w[j][1]
+                # cp += 4 * weight * dpos * grid_v[base + offset] * inv_dx[0]
+                weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
+                cp += weight_grad * v[base + offset]
 
     return cp
 
@@ -925,10 +964,11 @@ def gather_Tp(xp):
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
-            # dpos = offset.cast(ti.f32) - fx
-            weight = w[i][0] * w[j][1]
-            # cp += 4 * weight * dpos * grid_v[base + offset] * inv_dx[0]
-            Tp += weight * T[base + offset]
+            if vec2_is_valid(base + offset):
+                # dpos = offset.cast(ti.f32) - fx
+                weight = w[i][0] * w[j][1]
+                # cp += 4 * weight * dpos * grid_v[base + offset] * inv_dx[0]
+                Tp += weight * T[base + offset]
 
     return Tp
 
@@ -952,9 +992,10 @@ def gather_vp_grad_u(xp):
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
-            # weight = w[i][0] * w[j][1]
-            weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
-            vp_grad += (u[base + offset] * e).outer_product(weight_grad)
+            if vec2_is_valid(base + offset):
+                # weight = w[i][0] * w[j][1]
+                weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
+                vp_grad += (u[base + offset] * e).outer_product(weight_grad)
     
     return vp_grad
 
@@ -978,9 +1019,10 @@ def gather_vp_grad_v(xp):
     for i in ti.static(range(3)):
         for j in ti.static(range(3)):
             offset = vec2(i, j)
-            # weight = w[i][0] * w[j][1]
-            weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
-            vp_grad += (v[base + offset] * e).outer_product(weight_grad)
+            if vec2_is_valid(base + offset):
+                # weight = w[i][0] * w[j][1]
+                weight_grad = vec2(w_grad[i][0]*w[j][1], w[i][0]*w_grad[j][1])
+                vp_grad += (v[base + offset] * e).outer_product(weight_grad)
     
     return vp_grad
 
@@ -994,10 +1036,12 @@ def G2P():
             xp = particle_positions[p]
             u_pic = gather_vp_u(xp)
             v_pic = gather_vp_v(xp)
+            """
             if isnan(u_pic) or isnan(v_pic):
                 print("u or v isnan")
                 print("u: ", u_pic)
                 print("v: ", v_pic)
+            """
             new_v_pic = vec2(u_pic, v_pic)
             particle_velocities[p] = new_v_pic
 
@@ -1027,7 +1071,13 @@ def update_deformation_gradient():
             update_term = ti.Matrix.identity(ti.f32, 2)
             for i in range(count):
                 update_term = update_term @ (ti.Matrix.identity(ti.f32, 2) + dt * vp_grad)
+            
             new_particle_Fe = update_term @ particle_Fe[p]
+            if isnan(new_particle_Fe.determinant()):
+                print("Gather Fe error")
+                print("Update term: ", update_term)
+                print("Old particle_Fe: ", particle_Fe[p])
+                print("Vp grad: ", vp_grad)
             if particle_Phase[p] == P_FLUID_PHASE:
                 new_particle_Fe = ti.math.sqrt(new_particle_Fe.determinant()) * ti.Matrix.identity(ti.f32, 2)
             particle_Fe[p] = new_particle_Fe
@@ -1044,10 +1094,12 @@ def advect_particle(dt: ti.f32):
             pos = particle_positions[p]
             pv = particle_velocities[p]
             pos += pv * dt
+            """
             if isnan(pos[0]) or isnan(pos[1]):
                 print("old pos: ", particle_positions[p])
                 print("new pos", pos)
                 print("vel: ", pv)
+            """
             if pos[0] <= grid_x:  # left boundary
                 pos[0] = grid_x
                 pv[0] = 0
@@ -1060,10 +1112,12 @@ def advect_particle(dt: ti.f32):
             if pos[1] >= h - grid_y:  # top boundary
                 pos[1] = h - grid_y
                 pv[1] = 0
+            """
             if isnan(pos[0]) or isnan(pos[1]):
                 print("old pos(after adjustment): ", particle_positions[p])
                 print("new pos(after adjustment): ", pos)
                 print("vel(after adjustment): ", pv)
+            """
             particle_positions[p] = pos
             particle_velocities[p] = pv
 
