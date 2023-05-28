@@ -486,7 +486,7 @@ def scatter_face_v(xp, vp, cp, PFT, kp):
                 # weight_cdf = w_cdf[i] * w_cdf[j]
 
                 # print("v" + str(i) + ", " + str(j) + ": ", weight * p_mass * (vp + cp.dot(dpos)))
-                v[base + offset] += weight * p_mass * vp#s(vp + ti.math.dot(cp, dpos))
+                v[base + offset] += weight * p_mass * vp#(vp + ti.math.dot(cp, dpos))
                 k_v[base + offset] += weight * p_mass * kp   # Need not to multiply affine to heat conductivity(maybe?)
                 if v_face_mass[base + offset] < 0.0:
                     v_face_mass[base + offset] = weight * p_mass # Maybe in waterSim2d, they assume that every particles' mass is 1?
@@ -1093,31 +1093,31 @@ def advect_particle(dt: ti.f32):
         if particle_type[p] == P_FLUID:
             pos = particle_positions[p]
             pv = particle_velocities[p]
-            pos += pv * dt
             """
             if isnan(pos[0]) or isnan(pos[1]):
                 print("old pos: ", particle_positions[p])
                 print("new pos", pos)
                 print("vel: ", pv)
             """
-            if pos[0] <= grid_x:  # left boundary
+            if pos[0] <= grid_x and pv[0] < 0:  # left boundary
                 pos[0] = grid_x
-                pv[0] = 0
-            if pos[0] >= w - grid_x:  # right boundary
+                pv[0] = -pv[0]
+            if pos[0] >= w - grid_x and pv[0] > 0:  # right boundary
                 pos[0] = w - grid_x
-                pv[0] = 0
-            if pos[1] <= grid_y:  # bottom boundary
+                pv[0] = -pv[0]
+            if pos[1] <= grid_y and pv[1] < 0:  # bottom boundary
                 pos[1] = grid_y
-                pv[1] = 0
-            if pos[1] >= h - grid_y:  # top boundary
+                pv[1] = -pv[1]
+            if pos[1] >= h - grid_y and pv[1] > 0:  # top boundary
                 pos[1] = h - grid_y
-                pv[1] = 0
+                pv[1] = -pv[1]
             """
             if isnan(pos[0]) or isnan(pos[1]):
                 print("old pos(after adjustment): ", particle_positions[p])
                 print("new pos(after adjustment): ", pos)
                 print("vel(after adjustment): ", pv)
             """
+            pos += pv * dt
             particle_positions[p] = pos
             particle_velocities[p] = pv
 
